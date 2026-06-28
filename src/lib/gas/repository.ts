@@ -35,7 +35,6 @@ type TicketRow = {
   submitted_at: string | null;
   created_at: string;
   gas_receipts?: { file_name: string | null } | { file_name: string | null }[] | null;
-  gas_clients?: { name: string | null } | { name: string | null }[] | null;
 };
 
 type ReceiptRow = {
@@ -96,12 +95,6 @@ function firstReceiptName(row: TicketRow): string | null {
   return receipt?.file_name ?? null;
 }
 
-function firstClientName(row: TicketRow): string | null {
-  const client = row.gas_clients;
-  if (Array.isArray(client)) return client[0]?.name ?? null;
-  return client?.name ?? null;
-}
-
 function mapClient(row: ClientRow): GasClientRecord {
   return {
     id: row.id,
@@ -124,11 +117,11 @@ function mapOperator(row: OperatorRow): GasOperatorRecord {
   };
 }
 
-function mapTicket(row: TicketRow): GasTicketRecord {
+function mapTicket(row: TicketRow, clientName?: string | null): GasTicketRecord {
   return {
     id: row.id,
     clientId: row.client_id,
-    clientName: firstClientName(row),
+    clientName: clientName ?? null,
     receiptId: row.receipt_id,
     operatorId: row.operator_id,
     operatorName: row.operator_name,
@@ -284,7 +277,7 @@ export async function createTicket(input: {
       payment_type: input.ticket.paymentType,
       status: input.status ?? "submit_pending",
     })
-    .select("*, gas_receipts(file_name), gas_clients(name)")
+    .select("*, gas_receipts(file_name)")
     .single();
 
   if (error) {
@@ -293,15 +286,30 @@ export async function createTicket(input: {
     }
     throw new Error(`Ticket insert failed: ${error.message}`);
   }
+  return mapTicket(data as TicketRow, input.client?.name ?? null);
+}
 
-  return mapTicket(data as TicketRow);
+async function loadClientNames(clientIds: string[]): Promise<Map<string, string>> {
+  if (clientIds.length === 0) return new Map();
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.from("gas_clients").select("id, name").in("id", clientIds);
+  if (error) throw new Error(`Client lookup failed: ${error.message}`);
+
+  return new Map(((data ?? []) as Array<{ id: string; name: string | null }>).map((row) => [row.id, row.name ?? ""]));
+}
+
+async function mapTicketsWithClients(rows: TicketRow[]): Promise<GasTicketRecord[]> {
+  const clientIds = [...new Set(rows.map((row) => row.client_id).filter((value): value is string => Boolean(value)))];
+  const clientNames = await loadClientNames(clientIds);
+  return rows.map((row) => mapTicket(row, row.client_id ? clientNames.get(row.client_id) ?? null : null));
 }
 
 export async function listTickets(limit = 50, session?: AppSession): Promise<GasTicketRecord[]> {
   const supabase = createAdminClient();
   let query = supabase
     .from("gas_tickets")
-    .select("*, gas_receipts(file_name), gas_clients(name)")
+    .select("*, gas_receipts(file_name)")
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -318,32 +326,35 @@ export async function listTickets(limit = 50, session?: AppSession): Promise<Gas
   const { data, error } = await query;
 
   if (error) throw new Error(`Ticket lookup failed: ${error.message}`);
-  return ((data ?? []) as TicketRow[]).map(mapTicket);
+  return mapTicketsWithClients((data ?? []) as TicketRow[]);
 }
 
 export async function getTicketById(id: string): Promise<GasTicketRecord | null> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("gas_tickets")
-    .select("*, gas_receipts(file_name), gas_clients(name)")
+    .select("*, gas_receipts(file_name)")
     .eq("id", id)
     .maybeSingle();
 
   if (error) throw new Error(`Ticket lookup failed: ${error.message}`);
-  return data ? mapTicket(data as TicketRow) : null;
+  if (!data) return null;
+  const row = data as TicketRow;
+  const clientName = row.client_id ? (await loadClientNames([row.client_id])).get(row.client_id) ?? null : null;
+  return mapTicket(row, clientName);
 }
 
 export async function getPendingTickets(limit = 25): Promise<GasTicketRecord[]> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("gas_tickets")
-    .select("*, gas_receipts(file_name), gas_clients(name)")
+    .select("*, gas_receipts(file_name)")
     .eq("status", "submit_pending")
     .order("created_at", { ascending: true })
     .limit(limit);
 
   if (error) throw new Error(`Pending ticket lookup failed: ${error.message}`);
-  return ((data ?? []) as TicketRow[]).map(mapTicket);
+  return mapTicketsWithClients((data ?? []) as TicketRow[]);
 }
 
 export async function getClientByEmail(email: string): Promise<GasClientRecord | null> {
