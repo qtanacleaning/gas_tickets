@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAppSession, getSessionCookieNames, getSessionCookieOptions, getRequestSession } from "@/lib/auth";
-import { getAppEnv } from "@/lib/env";
-import { getClientByEmail, verifyOperatorPin } from "@/lib/gas/repository";
+import { getAppEnv, getEnvClientAccounts, getEnvOperatorAccounts } from "@/lib/env";
+import { getClientByEmail, upsertClient, verifyOperatorPin } from "@/lib/gas/repository";
 import type { UserRole } from "@/lib/gas/types";
 
 export const dynamic = "force-dynamic";
@@ -30,21 +30,55 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid password." }, { status: 401 });
     }
 
-    if (role === "client" && body.password !== clientPassword) {
-      return NextResponse.json({ error: "Invalid password." }, { status: 401 });
-    }
-
-    const operator =
-      role === "operator" ? await verifyOperatorPin({ name: body.name ?? "", pin: body.password ?? "" }) : null;
-    if (role === "operator" && !operator) {
-      return NextResponse.json({ error: "Invalid operator or PIN." }, { status: 401 });
-    }
-
     const clientEmail = body.clientEmail?.trim().toLowerCase();
-    const client = role === "client" && clientEmail ? await getClientByEmail(clientEmail) : null;
+    const envClient =
+      role === "client" && clientEmail
+        ? getEnvClientAccounts().find((account) => account.email.trim().toLowerCase() === clientEmail)
+        : null;
+
+    if (role === "client") {
+      const hasIndividualClients = getEnvClientAccounts().length > 0;
+      const validIndividualClient = envClient?.password === body.password;
+      const validSharedClientPassword = !hasIndividualClients && clientPassword && body.password === clientPassword;
+      if (!validIndividualClient && !validSharedClientPassword) {
+        return NextResponse.json({ error: "Invalid password." }, { status: 401 });
+      }
+    }
+
+    const envOperator =
+      role === "operator"
+        ? getEnvOperatorAccounts().find(
+            (account) =>
+              account.name.trim().toLowerCase() === body.name?.trim().toLowerCase() &&
+              account.pin === body.password,
+          )
+        : null;
+    const operator = role === "operator" && !envOperator
+      ? await verifyOperatorPin({ name: body.name ?? "", pin: body.password ?? "" })
+      : null;
+    if (role === "operator" && !operator) {
+      if (!envOperator) {
+        return NextResponse.json({ error: "Invalid operator or PIN." }, { status: 401 });
+      }
+    }
+
+    const client = envClient
+      ? await upsertClient({
+          name: envClient.name,
+          rfc: envClient.rfc,
+          email: envClient.email,
+          taxRegime: envClient.taxRegime,
+        })
+      : role === "client" && clientEmail
+        ? await getClientByEmail(clientEmail)
+        : null;
     const session = {
       role,
-      name: operator?.name ?? client?.name ?? (body.name?.trim() || (role === "admin" ? "Admin" : undefined)),
+      name:
+        envOperator?.name ??
+        operator?.name ??
+        client?.name ??
+        (body.name?.trim() || (role === "admin" ? "Admin" : undefined)),
       operatorId: operator?.id,
       clientId: client?.id,
       clientEmail: role === "client" ? clientEmail : undefined,

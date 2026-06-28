@@ -22,8 +22,41 @@ This project includes:
 ## Roles
 
 - Admin: full control, manual tickets, queue review, and factura submission.
-- Operator: log in with the name/PIN assigned by an admin, upload receipt photos, and see commission. Commission is calculated as 10% of the ticket IVA.
-- Client: save account data (name, RFC, email, tax regime) and upload receipts under that fiscal profile.
+- Operator: log in with the name/PIN configured in environment variables or assigned by an admin, upload receipt photos, and see commission. Commission is calculated as 10% of the ticket IVA.
+- Client: log in with the email/password configured in environment variables. Name, RFC, email, and tax regime are selected automatically from that account.
+
+## Environment Accounts
+
+Operators can be configured with either:
+
+```env
+OPERATOR_ACCOUNTS_JSON=[{"name":"Manuel","pin":"1234"}]
+```
+
+or:
+
+```env
+OPERATOR_1_NAME=Manuel
+OPERATOR_1_PIN=1234
+```
+
+Clients can be configured with either:
+
+```env
+CLIENT_ACCOUNTS_JSON=[{"name":"Client Company","email":"client@example.com","password":"secret","rfc":"XAXX010101000","taxRegime":"601"}]
+```
+
+or:
+
+```env
+CLIENT_1_NAME=Client Company
+CLIENT_1_EMAIL=client@example.com
+CLIENT_1_PASSWORD=secret
+CLIENT_1_RFC=XAXX010101000
+CLIENT_1_TAX_REGIME=601
+```
+
+When a client logs in, the app automatically uses that client's RFC and fiscal data for uploaded receipts.
 
 ## Local Development
 

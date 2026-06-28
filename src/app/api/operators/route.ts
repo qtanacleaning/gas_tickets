@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { assertRoleRequest } from "@/lib/auth";
+import { getEnvOperatorAccounts } from "@/lib/env";
 import { createOperator, listOperators } from "@/lib/gas/repository";
 
 export const dynamic = "force-dynamic";
@@ -7,7 +8,14 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
     assertRoleRequest(request, ["admin"]);
-    return NextResponse.json({ operators: await listOperators() });
+    const envOperators = getEnvOperatorAccounts().map((operator) => ({
+      id: `env:${operator.name}`,
+      name: operator.name,
+      active: true,
+      createdAt: "",
+      updatedAt: "",
+    }));
+    return NextResponse.json({ operators: [...envOperators, ...(await listOperators())] });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Could not list operators." },

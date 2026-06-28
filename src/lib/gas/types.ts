@@ -73,3 +73,16 @@ export type GasOperatorRecord = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type EnvOperatorAccount = {
+  name: string;
+  pin: string;
+};
+
+export type EnvClientAccount = {
+  name: string;
+  email: string;
+  password: string;
+  rfc: string;
+  taxRegime: string;
+};
