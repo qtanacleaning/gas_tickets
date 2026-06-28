@@ -12,6 +12,7 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 export type AppSession = {
   role: UserRole;
   name?: string;
+  operatorId?: string;
   clientId?: string;
   clientEmail?: string;
 };
@@ -74,6 +75,7 @@ export function readAppSession(value: string | undefined): AppSession | null {
   return {
     role: decoded.role,
     name: decoded.name,
+    operatorId: decoded.operatorId,
     clientId: decoded.clientId,
     clientEmail: decoded.clientEmail,
   };

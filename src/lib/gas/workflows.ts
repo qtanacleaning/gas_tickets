@@ -40,6 +40,7 @@ export async function createManualTicket(input: {
   iva?: unknown;
   paymentType: unknown;
   client?: GasClientRecord | null;
+  operatorId?: string | null;
   operatorName?: string | null;
 }): Promise<GasTicketRecord> {
   const validation = validateTicketInput(input);
@@ -51,6 +52,7 @@ export async function createManualTicket(input: {
     ticket: validation.ticket,
     client: input.client,
     clientId: input.client?.id,
+    operatorId: input.operatorId,
     operatorName: input.operatorName,
     status: "submit_pending",
   });
@@ -59,6 +61,7 @@ export async function createManualTicket(input: {
 export async function ingestReceiptUpload(input: {
   file: File;
   uploadedBy?: string;
+  operatorId?: string | null;
   operatorName?: string | null;
   clientId?: string | null;
 }): Promise<{ receiptId: string; ticketsCreated: number; skippedReason?: string }> {
@@ -70,6 +73,7 @@ export async function ingestReceiptUpload(input: {
     storagePath,
     mimeType: input.file.type || "image/jpeg",
     uploadedBy: input.uploadedBy,
+    operatorId: input.operatorId,
     operatorName: input.operatorName ?? undefined,
     clientId: input.clientId,
   });
@@ -113,6 +117,7 @@ export async function processReceiptOcr(
       await createTicket({
         receiptId: receipt.id,
         clientId: receipt.clientId,
+        operatorId: receipt.operatorId,
         operatorName: receipt.operatorName,
         client,
         ticket,

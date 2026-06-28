@@ -31,6 +31,7 @@ export async function POST(request: Request) {
       total: body.total,
       iva: body.iva,
       paymentType: body.paymentType,
+      operatorId: session.operatorId,
       operatorName: session.name,
     });
     return NextResponse.json({ ticket }, { status: 201 });

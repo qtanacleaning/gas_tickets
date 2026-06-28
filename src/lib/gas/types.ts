@@ -22,6 +22,7 @@ export type GasTicketRecord = {
   receiptId: string | null;
   clientId: string | null;
   clientName?: string | null;
+  operatorId: string | null;
   operatorName: string | null;
   folio: string;
   referencia: string;
@@ -43,6 +44,7 @@ export type GasTicketRecord = {
 export type GasReceiptRecord = {
   id: string;
   clientId: string | null;
+  operatorId: string | null;
   fileName: string;
   storagePath: string | null;
   mimeType: string;
@@ -60,6 +62,14 @@ export type GasClientRecord = {
   rfc: string;
   email: string;
   taxRegime: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type GasOperatorRecord = {
+  id: string;
+  name: string;
+  active: boolean;
   createdAt: string;
   updatedAt: string;
 };

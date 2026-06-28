@@ -2,7 +2,6 @@ import "server-only";
 
 export type AppEnv = {
   adminPassword: string;
-  operatorPassword: string;
   clientPassword: string;
   sessionSecret: string;
   cronSecret: string;
@@ -34,9 +33,8 @@ export function requireEnv(name: string): string {
 
 export function getAppEnv(): AppEnv {
   return {
-    adminPassword: readEnv("ADMIN_PASSWORD") ?? requireEnv("OPERATOR_PASSWORD"),
-    operatorPassword: requireEnv("OPERATOR_PASSWORD"),
-    clientPassword: readEnv("CLIENT_PASSWORD") ?? requireEnv("OPERATOR_PASSWORD"),
+    adminPassword: requireEnv("ADMIN_PASSWORD"),
+    clientPassword: requireEnv("CLIENT_PASSWORD"),
     sessionSecret: requireEnv("SESSION_SECRET"),
     cronSecret: requireEnv("CRON_SECRET"),
     supabaseUrl: requireEnv("NEXT_PUBLIC_SUPABASE_URL"),

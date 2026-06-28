@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAppSession, getSessionCookieNames, getSessionCookieOptions, getRequestSession } from "@/lib/auth";
 import { getAppEnv } from "@/lib/env";
-import { getClientByEmail } from "@/lib/gas/repository";
+import { getClientByEmail, verifyOperatorPin } from "@/lib/gas/repository";
 import type { UserRole } from "@/lib/gas/types";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +13,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const { adminPassword, operatorPassword, clientPassword } = getAppEnv();
+    const { adminPassword, clientPassword } = getAppEnv();
     const body = (await request.json()) as {
       role?: UserRole;
       password?: string;
@@ -21,18 +21,31 @@ export async function POST(request: Request) {
       clientEmail?: string;
     };
     const role = body.role ?? "operator";
-    const expectedPassword =
-      role === "admin" ? adminPassword : role === "client" ? clientPassword : operatorPassword;
 
-    if (!["admin", "operator", "client"].includes(role) || body.password !== expectedPassword) {
+    if (!["admin", "operator", "client"].includes(role)) {
       return NextResponse.json({ error: "Invalid password." }, { status: 401 });
+    }
+
+    if (role === "admin" && body.password !== adminPassword) {
+      return NextResponse.json({ error: "Invalid password." }, { status: 401 });
+    }
+
+    if (role === "client" && body.password !== clientPassword) {
+      return NextResponse.json({ error: "Invalid password." }, { status: 401 });
+    }
+
+    const operator =
+      role === "operator" ? await verifyOperatorPin({ name: body.name ?? "", pin: body.password ?? "" }) : null;
+    if (role === "operator" && !operator) {
+      return NextResponse.json({ error: "Invalid operator or PIN." }, { status: 401 });
     }
 
     const clientEmail = body.clientEmail?.trim().toLowerCase();
     const client = role === "client" && clientEmail ? await getClientByEmail(clientEmail) : null;
     const session = {
       role,
-      name: client?.name ?? (body.name?.trim() || (role === "admin" ? "Admin" : undefined)),
+      name: operator?.name ?? client?.name ?? (body.name?.trim() || (role === "admin" ? "Admin" : undefined)),
+      operatorId: operator?.id,
       clientId: client?.id,
       clientEmail: role === "client" ? clientEmail : undefined,
     };

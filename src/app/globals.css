@@ -473,6 +473,32 @@ td {
   text-align: center;
 }
 
+.mini-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mini-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--color-surface-alt);
+  font-size: 13px;
+}
+
+.mini-row span:first-child {
+  font-weight: 700;
+}
+
+.mini-row span:last-child {
+  color: var(--color-muted);
+}
+
 .login-screen {
   min-height: 100vh;
   display: grid;

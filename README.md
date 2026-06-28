@@ -22,7 +22,7 @@ This project includes:
 ## Roles
 
 - Admin: full control, manual tickets, queue review, and factura submission.
-- Operator: upload receipt photos and see commission. Commission is calculated as 10% of the ticket IVA.
+- Operator: log in with the name/PIN assigned by an admin, upload receipt photos, and see commission. Commission is calculated as 10% of the ticket IVA.
 - Client: save account data (name, RFC, email, tax regime) and upload receipts under that fiscal profile.
 
 ## Local Development
@@ -38,6 +38,8 @@ Open `http://localhost:3000`.
 
 - `POST /api/session` - role login
 - `DELETE /api/session` - logout
+- `GET /api/operators` - admin-only operator list
+- `POST /api/operators` - admin-only operator create/update with PIN
 - `GET /api/client-profile` - load the current client's fiscal profile
 - `POST /api/client-profile` - save the current client's fiscal profile
 - `GET /api/tickets` - list recent tickets

@@ -8,16 +8,19 @@ import {
   Clock3,
   FilePlus2,
   Fuel,
+  KeyRound,
   LockKeyhole,
   LogOut,
   RefreshCw,
   Send,
   Upload,
   UserRound,
+  UserPlus,
 } from "lucide-react";
 import type { AppSession } from "@/lib/auth";
 import type {
   GasClientRecord,
+  GasOperatorRecord,
   GasTicketRecord,
   GasTicketStatus,
   PaymentType,
@@ -88,6 +91,8 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
   const [tickets, setTickets] = useState<GasTicketRecord[]>(initialTickets.map(normalizeTicket));
   const [paymentType, setPaymentType] = useState<PaymentType>("debit");
   const [manualForm, setManualForm] = useState({ folio: "", total: "", iva: "" });
+  const [operatorForm, setOperatorForm] = useState({ name: "", pin: "" });
+  const [operators, setOperators] = useState<GasOperatorRecord[]>([]);
   const [clientForm, setClientForm] = useState({
     name: initialSession?.name ?? "",
     rfc: "",
@@ -155,6 +160,12 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     };
   }, [isClient]);
 
+  useEffect(() => {
+    if (isAdmin) {
+      void loadOperators();
+    }
+  }, [isAdmin]);
+
   function setReceiptFile(file: File | null) {
     setSelectedFile(file);
     setPreviewUrl((current) => {
@@ -203,6 +214,34 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     setSession(null);
     setTickets([]);
     setMessage(null);
+  }
+
+  async function loadOperators() {
+    const response = await fetch("/api/operators", { cache: "no-store" });
+    if (!response.ok) return;
+    const data = (await response.json()) as { operators?: GasOperatorRecord[] };
+    setOperators(data.operators ?? []);
+  }
+
+  async function saveOperator(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy("operator");
+    const response = await fetch("/api/operators", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(operatorForm),
+    });
+    const data = (await response.json()) as { operator?: GasOperatorRecord; error?: string };
+    setBusy(null);
+
+    if (!response.ok || !data.operator) {
+      setMessage({ type: "error", text: data.error ?? "No se pudo guardar el operador." });
+      return;
+    }
+
+    setOperatorForm({ name: "", pin: "" });
+    setMessage({ type: "success", text: `Operador ${data.operator.name} guardado.` });
+    await loadOperators();
   }
 
   async function saveClientProfile(event: React.FormEvent<HTMLFormElement>) {
@@ -365,10 +404,11 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
             </div>
           )}
           <div className="field">
-            <label htmlFor="password">Password</label>
+            <label htmlFor="password">{loginRole === "operator" ? "PIN" : "Password"}</label>
             <input
               id="password"
               type="password"
+              inputMode={loginRole === "operator" ? "numeric" : undefined}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="current-password"
@@ -451,6 +491,54 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
 
         <div className="grid" style={{ marginTop: message ? 14 : 0 }}>
           <div className="stack">
+            {isAdmin && (
+              <section className="panel">
+                <div className="panel-header">
+                  <h3>Operadores</h3>
+                  <UserPlus size={18} />
+                </div>
+                <form className="panel-body stack" onSubmit={saveOperator}>
+                  <div className="field">
+                    <label htmlFor="operatorName">Nombre</label>
+                    <input
+                      id="operatorName"
+                      value={operatorForm.name}
+                      onChange={(event) => setOperatorForm((form) => ({ ...form, name: event.target.value }))}
+                      autoComplete="off"
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="operatorPin">PIN</label>
+                    <input
+                      id="operatorPin"
+                      type="password"
+                      inputMode="numeric"
+                      pattern="[0-9]{4,8}"
+                      value={operatorForm.pin}
+                      onChange={(event) => setOperatorForm((form) => ({ ...form, pin: event.target.value }))}
+                      autoComplete="new-password"
+                      required
+                    />
+                  </div>
+                  <button className="button full" type="submit" disabled={busy === "operator"}>
+                    <KeyRound size={16} />
+                    Guardar operador
+                  </button>
+                  {operators.length > 0 && (
+                    <div className="mini-list">
+                      {operators.map((operator) => (
+                        <div className="mini-row" key={operator.id}>
+                          <span>{operator.name}</span>
+                          <span>{operator.active ? "Activo" : "Inactivo"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </form>
+              </section>
+            )}
+
             {isClient && (
               <section className="panel">
                 <div className="panel-header">

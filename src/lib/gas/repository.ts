@@ -1,11 +1,13 @@
 import "server-only";
 
+import crypto from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAppEnv } from "@/lib/env";
 import type { AppSession } from "@/lib/auth";
 import type {
   ExtractedTicket,
   GasClientRecord,
+  GasOperatorRecord,
   GasReceiptRecord,
   GasReceiptStatus,
   GasTicketRecord,
@@ -16,6 +18,7 @@ type TicketRow = {
   id: string;
   client_id: string | null;
   receipt_id: string | null;
+  operator_id: string | null;
   operator_name: string | null;
   folio: string;
   referencia: string;
@@ -38,6 +41,7 @@ type TicketRow = {
 type ReceiptRow = {
   id: string;
   client_id: string | null;
+  operator_id: string | null;
   file_name: string;
   storage_path: string | null;
   mime_type: string;
@@ -59,10 +63,21 @@ type ClientRow = {
   updated_at: string;
 };
 
+type OperatorRow = {
+  id: string;
+  name: string;
+  name_key: string;
+  pin_hash: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 function mapReceipt(row: ReceiptRow): GasReceiptRecord {
   return {
     id: row.id,
     clientId: row.client_id,
+    operatorId: row.operator_id,
     fileName: row.file_name,
     storagePath: row.storage_path,
     mimeType: row.mime_type,
@@ -99,12 +114,23 @@ function mapClient(row: ClientRow): GasClientRecord {
   };
 }
 
+function mapOperator(row: OperatorRow): GasOperatorRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    active: row.active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function mapTicket(row: TicketRow): GasTicketRecord {
   return {
     id: row.id,
     clientId: row.client_id,
     clientName: firstClientName(row),
     receiptId: row.receipt_id,
+    operatorId: row.operator_id,
     operatorName: row.operator_name,
     folio: row.folio,
     referencia: row.referencia,
@@ -126,6 +152,15 @@ function mapTicket(row: TicketRow): GasTicketRecord {
 
 function commissionFromIva(iva: number | undefined): number {
   return Math.round((iva ?? 0) * 10) / 100;
+}
+
+function operatorNameKey(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function hashOperatorPin(pin: string): string {
+  const { sessionSecret } = getAppEnv();
+  return crypto.createHmac("sha256", sessionSecret).update(pin.trim()).digest("base64url");
 }
 
 export async function uploadReceiptFile(file: File, storagePath: string): Promise<void> {
@@ -153,6 +188,7 @@ export async function createReceipt(input: {
   storagePath: string;
   mimeType: string;
   uploadedBy?: string;
+  operatorId?: string | null;
   operatorName?: string;
   clientId?: string | null;
 }): Promise<GasReceiptRecord> {
@@ -164,6 +200,7 @@ export async function createReceipt(input: {
       storage_path: input.storagePath,
       mime_type: input.mimeType,
       uploaded_by: input.uploadedBy || null,
+      operator_id: input.operatorId ?? null,
       operator_name: input.operatorName || input.uploadedBy || null,
       client_id: input.clientId ?? null,
       status: "ocr_pending",
@@ -220,6 +257,7 @@ export async function listReceiptsForOcr(limit = 10): Promise<GasReceiptRecord[]
 export async function createTicket(input: {
   receiptId?: string | null;
   clientId?: string | null;
+  operatorId?: string | null;
   operatorName?: string | null;
   client?: GasClientRecord | null;
   ticket: ExtractedTicket;
@@ -234,6 +272,7 @@ export async function createTicket(input: {
     .insert({
       receipt_id: input.receiptId ?? null,
       client_id: input.clientId ?? input.client?.id ?? null,
+      operator_id: input.operatorId ?? null,
       operator_name: input.operatorName ?? null,
       folio: input.ticket.folio,
       referencia: env.petromayabReferencia,
@@ -267,7 +306,9 @@ export async function listTickets(limit = 50, session?: AppSession): Promise<Gas
     .limit(limit);
 
   if (session?.role === "operator") {
-    query = query.eq("operator_name", session.name ?? "");
+    query = session.operatorId
+      ? query.or(`operator_id.eq.${session.operatorId},operator_name.eq.${session.name ?? ""}`)
+      : query.eq("operator_name", session.name ?? "");
   }
 
   if (session?.role === "client") {
@@ -346,6 +387,68 @@ export async function upsertClient(input: {
     .single();
   if (error) throw new Error(`Client save failed: ${error.message}`);
   return mapClient(data as ClientRow);
+}
+
+export async function listOperators(): Promise<GasOperatorRecord[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("gas_operators")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(`Operator lookup failed: ${error.message}`);
+  return ((data ?? []) as OperatorRow[]).map(mapOperator);
+}
+
+export async function createOperator(input: { name: string; pin: string }): Promise<GasOperatorRecord> {
+  const name = input.name.trim();
+  const pin = input.pin.trim();
+
+  if (name.length < 2) throw new Error("Operator name is required.");
+  if (!/^\d{4,8}$/.test(pin)) throw new Error("Operator PIN must be 4 to 8 digits.");
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("gas_operators")
+    .upsert(
+      {
+        name,
+        name_key: operatorNameKey(name),
+        pin_hash: hashOperatorPin(pin),
+        active: true,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "name_key" },
+    )
+    .select("*")
+    .single();
+
+  if (error) throw new Error(`Operator save failed: ${error.message}`);
+  return mapOperator(data as OperatorRow);
+}
+
+export async function verifyOperatorPin(input: {
+  name: string;
+  pin: string;
+}): Promise<GasOperatorRecord | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("gas_operators")
+    .select("*")
+    .eq("name_key", operatorNameKey(input.name))
+    .eq("active", true)
+    .maybeSingle();
+
+  if (error) throw new Error(`Operator lookup failed: ${error.message}`);
+  if (!data) return null;
+
+  const row = data as OperatorRow;
+  const expected = Buffer.from(row.pin_hash);
+  const received = Buffer.from(hashOperatorPin(input.pin));
+  if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) {
+    return null;
+  }
+
+  return mapOperator(row);
 }
 
 export async function updateTicket(

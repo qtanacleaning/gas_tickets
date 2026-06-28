@@ -37,6 +37,7 @@ export async function POST(request: Request) {
     const result = await ingestReceiptUpload({
       file,
       uploadedBy: uploadedBy || session.name || undefined,
+      operatorId: session.role === "operator" ? session.operatorId : undefined,
       operatorName,
       clientId: session.role === "client" ? session.clientId : clientId || undefined,
     });
