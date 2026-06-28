@@ -27,6 +27,10 @@ type Message = {
   text: string;
 };
 
+type RowActionState =
+  | { kind: "submit"; label: string }
+  | { kind: "label"; label: string; tone: "success" | "neutral" | "error" };
+
 const statusLabels: Record<GasTicketStatus, string> = {
   submit_pending: "Pendiente",
   submitted: "Facturado",
@@ -47,6 +51,26 @@ function normalizeTicket(ticket: GasTicketRecord): GasTicketRecord {
     importeTotal: Number(ticket.importeTotal),
     iva: ticket.iva === null ? null : Number(ticket.iva),
   };
+}
+
+function getRowActionState(ticket: GasTicketRecord): RowActionState {
+  if (ticket.status === "submit_pending") {
+    return { kind: "submit", label: "Enviar" };
+  }
+
+  if (ticket.status === "failed") {
+    return { kind: "submit", label: "Reintentar" };
+  }
+
+  if (ticket.status === "submitted") {
+    return { kind: "label", label: "Enviado", tone: "success" };
+  }
+
+  if (ticket.status === "already_invoiced") {
+    return { kind: "label", label: "Facturado", tone: "success" };
+  }
+
+  return { kind: "label", label: "Revisar", tone: "error" };
 }
 
 export function OperatorPortal({ initialAuthenticated, initialTickets }: OperatorPortalProps) {
@@ -426,20 +450,30 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
                             {statusLabels[ticket.status]}
                           </span>
                         </td>
-                        <td>{ticket.receiptFileName ?? "Manual"}</td>
+                        <td className="receipt-cell">
+                          <span className="receipt-name" title={ticket.receiptFileName ?? "Manual"}>
+                            {ticket.receiptFileName ?? "Manual"}
+                          </span>
+                        </td>
                         <td>
-                          <button
-                            className="button secondary"
-                            type="button"
-                            onClick={() => submit(ticket.id)}
-                            disabled={
-                              busy === ticket.id ||
-                              (ticket.status !== "submit_pending" && ticket.status !== "failed")
+                          {(() => {
+                            const action = getRowActionState(ticket);
+                            if (action.kind === "submit") {
+                              return (
+                                <button
+                                  className="button secondary action-button"
+                                  type="button"
+                                  onClick={() => submit(ticket.id)}
+                                  disabled={busy === ticket.id}
+                                >
+                                  <Send size={14} />
+                                  {action.label}
+                                </button>
+                              );
                             }
-                          >
-                            <Send size={14} />
-                            Enviar
-                          </button>
+
+                            return <span className={`action-badge ${action.tone}`}>{action.label}</span>;
+                          })()}
                         </td>
                       </tr>
                     ))}

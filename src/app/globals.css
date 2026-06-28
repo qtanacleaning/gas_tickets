@@ -383,6 +383,19 @@ td {
   font-size: 14px;
 }
 
+.receipt-cell {
+  max-width: 0;
+}
+
+.receipt-name {
+  display: block;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+
 .num {
   font-variant-numeric: tabular-nums;
 }
@@ -414,6 +427,38 @@ td {
 
 .status-pill.failed,
 .status-pill.needs_review {
+  background: var(--color-error-bg);
+  color: var(--color-error);
+}
+
+.action-button {
+  min-width: 108px;
+}
+
+.action-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  min-width: 108px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  background: var(--color-surface-alt);
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.action-badge.success {
+  border-color: color-mix(in srgb, var(--color-success) 20%, var(--color-border));
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.action-badge.error {
+  border-color: color-mix(in srgb, var(--color-error) 20%, var(--color-border));
   background: var(--color-error-bg);
   color: var(--color-error);
 }
