@@ -307,23 +307,29 @@ async function mapTicketsWithClients(rows: TicketRow[]): Promise<GasTicketRecord
 
 export async function listTickets(limit = 50, session?: AppSession): Promise<GasTicketRecord[]> {
   const supabase = createAdminClient();
-  let query = supabase
-    .from("gas_tickets")
-    .select("*, gas_receipts(file_name)")
-    .order("created_at", { ascending: false })
-    .limit(limit);
+  const buildBaseQuery = () =>
+    supabase
+      .from("gas_tickets")
+      .select("*, gas_receipts(file_name)")
+      .order("created_at", { ascending: false })
+      .limit(limit);
 
-  if (session?.role === "operator") {
-    query = session.operatorId
-      ? query.or(`operator_id.eq.${session.operatorId},operator_name.eq.${session.name ?? ""}`)
-      : query.eq("operator_name", session.name ?? "");
+  let query = buildBaseQuery();
+
+  if (session?.role === "operator" && session.operatorId) {
+    query = query.eq("operator_id", session.operatorId);
   }
 
   if (session?.role === "client") {
     query = query.eq("client_id", session.clientId ?? "00000000-0000-0000-0000-000000000000");
   }
 
-  const { data, error } = await query;
+  let { data, error } = await query;
+
+  // Older live databases may not have operator/client columns yet.
+  if (error && session?.role === "operator" && /operator_(id|name)/i.test(error.message)) {
+    ({ data, error } = await buildBaseQuery());
+  }
 
   if (error) throw new Error(`Ticket lookup failed: ${error.message}`);
   return mapTicketsWithClients((data ?? []) as TicketRow[]);
