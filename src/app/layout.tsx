@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Qtana Gas Tickets",
+  title: "Gasolina Tickets",
   description: "Operator portal for gas ticket factura submission.",
 };
 

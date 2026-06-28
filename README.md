@@ -1,8 +1,8 @@
-# Qtana Gas Tickets
+# Gasolina Tickets
 
 Standalone operator portal for uploading Petromayab gas receipts, extracting ticket data, and submitting pending tickets for factura.
 
-This replaces the Google Apps Script flow with:
+This project includes:
 
 - Next.js operator UI
 - Server-side session cookie for operators

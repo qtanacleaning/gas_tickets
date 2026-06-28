@@ -236,8 +236,8 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
             <LockKeyhole size={22} />
           </span>
           <div>
-            <p className="eyebrow">Qtana Cleaning</p>
-            <h1>Gas Tickets</h1>
+            <p className="eyebrow">Gasolina</p>
+            <h1>Gasolina Tickets</h1>
             <p>Portal de operadores para recibos Petromayab.</p>
           </div>
           <div className="field">
@@ -267,8 +267,8 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
         <span className="brand-mark">
           <Fuel size={24} />
         </span>
-        <h1>Gas Tickets</h1>
-        <p>Qtana Cleaning factura queue</p>
+        <h1>Gasolina</h1>
+        <p>Portal de facturacion de gasolina</p>
 
         <div className="sidebar-list">
           <div className="sidebar-row">
