@@ -13,12 +13,20 @@ import {
   RefreshCw,
   Send,
   Upload,
+  UserRound,
 } from "lucide-react";
-import type { GasTicketRecord, GasTicketStatus, PaymentType } from "@/lib/gas/types";
+import type { AppSession } from "@/lib/auth";
+import type {
+  GasClientRecord,
+  GasTicketRecord,
+  GasTicketStatus,
+  PaymentType,
+  UserRole,
+} from "@/lib/gas/types";
 import { formatCurrency } from "@/lib/gas/validation";
 
 type OperatorPortalProps = {
-  initialAuthenticated: boolean;
+  initialSession: AppSession | null;
   initialTickets: GasTicketRecord[];
 };
 
@@ -39,6 +47,12 @@ const statusLabels: Record<GasTicketStatus, string> = {
   failed: "Error",
 };
 
+const roleLabels: Record<UserRole, string> = {
+  admin: "Admin",
+  operator: "Operador",
+  client: "Cliente",
+};
+
 function statusIcon(status: GasTicketStatus) {
   if (status === "submitted" || status === "already_invoiced") return <CheckCircle2 size={14} />;
   if (status === "failed" || status === "needs_review") return <AlertTriangle size={14} />;
@@ -50,43 +64,49 @@ function normalizeTicket(ticket: GasTicketRecord): GasTicketRecord {
     ...ticket,
     importeTotal: Number(ticket.importeTotal),
     iva: ticket.iva === null ? null : Number(ticket.iva),
+    operatorCommission: Number(ticket.operatorCommission ?? 0),
   };
 }
 
 function getRowActionState(ticket: GasTicketRecord): RowActionState {
-  if (ticket.status === "submit_pending") {
-    return { kind: "submit", label: "Enviar" };
-  }
-
-  if (ticket.status === "failed") {
-    return { kind: "submit", label: "Reintentar" };
-  }
-
-  if (ticket.status === "submitted") {
-    return { kind: "label", label: "Enviado", tone: "success" };
-  }
-
-  if (ticket.status === "already_invoiced") {
-    return { kind: "label", label: "Facturado", tone: "success" };
-  }
-
+  if (ticket.status === "submit_pending") return { kind: "submit", label: "Enviar" };
+  if (ticket.status === "failed") return { kind: "submit", label: "Reintentar" };
+  if (ticket.status === "submitted") return { kind: "label", label: "Enviado", tone: "success" };
+  if (ticket.status === "already_invoiced") return { kind: "label", label: "Facturado", tone: "success" };
   return { kind: "label", label: "Revisar", tone: "error" };
 }
 
-export function OperatorPortal({ initialAuthenticated, initialTickets }: OperatorPortalProps) {
-  const [authenticated, setAuthenticated] = useState(initialAuthenticated);
+export function OperatorPortal({ initialSession, initialTickets }: OperatorPortalProps) {
+  const [session, setSession] = useState<AppSession | null>(initialSession);
+  const [loginRole, setLoginRole] = useState<UserRole>("operator");
   const [password, setPassword] = useState("");
+  const [loginName, setLoginName] = useState("");
+  const [loginEmail, setLoginEmail] = useState("");
   const [uploadedBy, setUploadedBy] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [tickets, setTickets] = useState<GasTicketRecord[]>(initialTickets.map(normalizeTicket));
   const [paymentType, setPaymentType] = useState<PaymentType>("debit");
   const [manualForm, setManualForm] = useState({ folio: "", total: "", iva: "" });
+  const [clientForm, setClientForm] = useState({
+    name: initialSession?.name ?? "",
+    rfc: "",
+    email: initialSession?.clientEmail ?? "",
+    taxRegime: "",
+  });
   const [message, setMessage] = useState<Message | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const isAdmin = session?.role === "admin";
+  const isOperator = session?.role === "operator";
+  const isClient = session?.role === "client";
+
   const pendingCount = useMemo(
     () => tickets.filter((ticket) => ticket.status === "submit_pending").length,
+    [tickets],
+  );
+  const commissionTotal = useMemo(
+    () => tickets.reduce((sum, ticket) => sum + ticket.operatorCommission, 0),
     [tickets],
   );
 
@@ -94,7 +114,7 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
     setBusy("load");
     const response = await fetch("/api/tickets", { cache: "no-store" });
     if (response.status === 401) {
-      setAuthenticated(false);
+      setSession(null);
       setBusy(null);
       return;
     }
@@ -113,6 +133,28 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
     };
   }, [previewUrl]);
 
+  useEffect(() => {
+    if (!isClient) return;
+
+    let cancelled = false;
+    fetch("/api/client-profile", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { client?: GasClientRecord } | null) => {
+        if (cancelled || !data?.client) return;
+        setClientForm({
+          name: data.client.name,
+          rfc: data.client.rfc,
+          email: data.client.email,
+          taxRegime: data.client.taxRegime,
+        });
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isClient]);
+
   function setReceiptFile(file: File | null) {
     setSelectedFile(file);
     setPreviewUrl((current) => {
@@ -127,26 +169,71 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
     const response = await fetch("/api/session", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({
+        role: loginRole,
+        password,
+        name: loginName,
+        clientEmail: loginEmail,
+      }),
     });
-    const data = (await response.json()) as { error?: string };
+    const data = (await response.json()) as { session?: AppSession; error?: string };
     setBusy(null);
 
-    if (!response.ok) {
+    if (!response.ok || !data.session) {
       setMessage({ type: "error", text: data.error ?? "Acceso rechazado." });
       return;
     }
 
     setPassword("");
     setMessage(null);
-    setAuthenticated(true);
+    setSession(data.session);
+    setUploadedBy(data.session.name ?? "");
+    if (data.session.role === "client") {
+      setClientForm((form) => ({
+        ...form,
+        name: data.session?.name ?? form.name,
+        email: data.session?.clientEmail ?? form.email,
+      }));
+    }
     await loadTickets();
   }
 
   async function logout() {
     await fetch("/api/session", { method: "DELETE" });
-    setAuthenticated(false);
+    setSession(null);
     setTickets([]);
+    setMessage(null);
+  }
+
+  async function saveClientProfile(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy("client-profile");
+    const response = await fetch("/api/client-profile", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(clientForm),
+    });
+    const data = (await response.json()) as {
+      client?: GasClientRecord;
+      session?: AppSession;
+      error?: string;
+    };
+    setBusy(null);
+
+    if (!response.ok || !data.client || !data.session) {
+      setMessage({ type: "error", text: data.error ?? "No se pudo guardar el perfil." });
+      return;
+    }
+
+    setSession(data.session);
+    setClientForm({
+      name: data.client.name,
+      rfc: data.client.rfc,
+      email: data.client.email,
+      taxRegime: data.client.taxRegime,
+    });
+    setMessage({ type: "success", text: "Perfil fiscal guardado." });
+    await loadTickets();
   }
 
   async function uploadReceipt(event: React.FormEvent<HTMLFormElement>) {
@@ -158,7 +245,8 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
 
     const formData = new FormData();
     formData.set("receipt", selectedFile);
-    formData.set("uploadedBy", uploadedBy);
+    formData.set("uploadedBy", uploadedBy || session?.name || "");
+    if (session?.clientId) formData.set("clientId", session.clientId);
 
     setBusy("upload");
     const response = await fetch("/api/tickets/upload", {
@@ -228,7 +316,7 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
     await loadTickets();
   }
 
-  if (!authenticated) {
+  if (!session) {
     return (
       <main className="login-screen">
         <form className="login-panel stack" onSubmit={login}>
@@ -238,8 +326,44 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
           <div>
             <p className="eyebrow">Gasolina</p>
             <h1>Gasolina Tickets</h1>
-            <p>Portal de operadores para recibos Petromayab.</p>
+            <p>Portal privado para recibos, operadores y clientes.</p>
           </div>
+          <div className="segmented role-tabs" aria-label="Rol de acceso">
+            {(["operator", "admin", "client"] as UserRole[]).map((role) => (
+              <button
+                key={role}
+                type="button"
+                className={loginRole === role ? "active" : ""}
+                onClick={() => setLoginRole(role)}
+              >
+                {roleLabels[role]}
+              </button>
+            ))}
+          </div>
+          {loginRole !== "admin" && (
+            <div className="field">
+              <label htmlFor="loginName">{loginRole === "client" ? "Nombre" : "Operador"}</label>
+              <input
+                id="loginName"
+                value={loginName}
+                onChange={(event) => setLoginName(event.target.value)}
+                autoComplete="name"
+              />
+            </div>
+          )}
+          {loginRole === "client" && (
+            <div className="field">
+              <label htmlFor="loginEmail">Email</label>
+              <input
+                id="loginEmail"
+                type="email"
+                value={loginEmail}
+                onChange={(event) => setLoginEmail(event.target.value)}
+                autoComplete="email"
+                required
+              />
+            </div>
+          )}
           <div className="field">
             <label htmlFor="password">Password</label>
             <input
@@ -268,7 +392,7 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
           <Fuel size={24} />
         </span>
         <h1>Gasolina</h1>
-        <p>Portal de facturacion de gasolina</p>
+        <p>{roleLabels[session.role]}{session.name ? `: ${session.name}` : ""}</p>
 
         <div className="sidebar-list">
           <div className="sidebar-row">
@@ -279,10 +403,18 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
             <Clock3 size={16} />
             {pendingCount} pendientes
           </div>
-          <div className="sidebar-row">
-            <CheckCircle2 size={16} />
-            Petromayab
-          </div>
+          {(isAdmin || isOperator) && (
+            <div className="sidebar-row">
+              <CheckCircle2 size={16} />
+              {formatCurrency(commissionTotal)} comision
+            </div>
+          )}
+          {isClient && (
+            <div className="sidebar-row">
+              <UserRound size={16} />
+              {session.clientId ? "Perfil listo" : "Perfil pendiente"}
+            </div>
+          )}
         </div>
       </aside>
 
@@ -290,22 +422,24 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
         <div className="topbar">
           <div>
             <p className="eyebrow">Operaciones</p>
-            <h2>Recibos y facturas</h2>
+            <h2>{isClient ? "Cuenta fiscal" : "Recibos y facturas"}</h2>
           </div>
           <div className="toolbar">
             <button className="button secondary" type="button" onClick={loadTickets} disabled={busy === "load"}>
               <RefreshCw size={16} />
               Actualizar
             </button>
-            <button
-              className="button warn"
-              type="button"
-              onClick={() => submit()}
-              disabled={busy === "submit-all" || pendingCount === 0}
-            >
-              <Send size={16} />
-              Enviar cola
-            </button>
+            {isAdmin && (
+              <button
+                className="button warn"
+                type="button"
+                onClick={() => submit()}
+                disabled={busy === "submit-all" || pendingCount === 0}
+              >
+                <Send size={16} />
+                Enviar cola
+              </button>
+            )}
             <button className="button secondary" type="button" onClick={logout}>
               <LogOut size={16} />
               Salir
@@ -317,6 +451,58 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
 
         <div className="grid" style={{ marginTop: message ? 14 : 0 }}>
           <div className="stack">
+            {isClient && (
+              <section className="panel">
+                <div className="panel-header">
+                  <h3>Perfil fiscal</h3>
+                  <UserRound size={18} />
+                </div>
+                <form className="panel-body stack" onSubmit={saveClientProfile}>
+                  <div className="field">
+                    <label htmlFor="clientName">Nombre</label>
+                    <input
+                      id="clientName"
+                      value={clientForm.name}
+                      onChange={(event) => setClientForm((form) => ({ ...form, name: event.target.value }))}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="clientRfc">RFC</label>
+                    <input
+                      id="clientRfc"
+                      value={clientForm.rfc}
+                      onChange={(event) => setClientForm((form) => ({ ...form, rfc: event.target.value }))}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="clientEmail">Email</label>
+                    <input
+                      id="clientEmail"
+                      type="email"
+                      value={clientForm.email}
+                      onChange={(event) => setClientForm((form) => ({ ...form, email: event.target.value }))}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="clientTaxRegime">Regimen fiscal</label>
+                    <input
+                      id="clientTaxRegime"
+                      value={clientForm.taxRegime}
+                      onChange={(event) => setClientForm((form) => ({ ...form, taxRegime: event.target.value }))}
+                      required
+                    />
+                  </div>
+                  <button className="button full" type="submit" disabled={busy === "client-profile"}>
+                    <UserRound size={16} />
+                    Guardar perfil
+                  </button>
+                </form>
+              </section>
+            )}
+
             <section className="panel">
               <div className="panel-header">
                 <h3>Subir recibo</h3>
@@ -343,84 +529,92 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
                     onChange={(event) => setReceiptFile(event.target.files?.[0] ?? null)}
                   />
                 </label>
-                <div className="field">
-                  <label htmlFor="uploadedBy">Operador</label>
-                  <input
-                    id="uploadedBy"
-                    value={uploadedBy}
-                    onChange={(event) => setUploadedBy(event.target.value)}
-                    placeholder="Nombre"
-                  />
-                </div>
-                <button className="button full" type="submit" disabled={busy === "upload"}>
+                {!isClient && (
+                  <div className="field">
+                    <label htmlFor="uploadedBy">Operador</label>
+                    <input
+                      id="uploadedBy"
+                      value={uploadedBy}
+                      onChange={(event) => setUploadedBy(event.target.value)}
+                      placeholder="Nombre"
+                    />
+                  </div>
+                )}
+                <button
+                  className="button full"
+                  type="submit"
+                  disabled={busy === "upload" || (isClient && !session.clientId)}
+                >
                   <Upload size={16} />
                   Subir recibo
                 </button>
               </form>
             </section>
 
-            <section className="panel">
-              <div className="panel-header">
-                <h3>Ticket manual</h3>
-                <FilePlus2 size={18} />
-              </div>
-              <form className="panel-body stack" onSubmit={createManual}>
-                <div className="field">
-                  <label htmlFor="folio">Folio</label>
-                  <input
-                    id="folio"
-                    inputMode="numeric"
-                    value={manualForm.folio}
-                    onChange={(event) => setManualForm((form) => ({ ...form, folio: event.target.value }))}
-                    required
-                  />
+            {isAdmin && (
+              <section className="panel">
+                <div className="panel-header">
+                  <h3>Ticket manual</h3>
+                  <FilePlus2 size={18} />
                 </div>
-                <div className="field">
-                  <label htmlFor="total">Total</label>
-                  <input
-                    id="total"
-                    inputMode="decimal"
-                    value={manualForm.total}
-                    onChange={(event) => setManualForm((form) => ({ ...form, total: event.target.value }))}
-                    required
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="iva">IVA</label>
-                  <input
-                    id="iva"
-                    inputMode="decimal"
-                    value={manualForm.iva}
-                    onChange={(event) => setManualForm((form) => ({ ...form, iva: event.target.value }))}
-                  />
-                </div>
-                <div className="segmented" aria-label="Metodo de pago">
-                  <button
-                    type="button"
-                    className={paymentType === "debit" ? "active" : ""}
-                    onClick={() => setPaymentType("debit")}
-                  >
-                    Debito
+                <form className="panel-body stack" onSubmit={createManual}>
+                  <div className="field">
+                    <label htmlFor="folio">Folio</label>
+                    <input
+                      id="folio"
+                      inputMode="numeric"
+                      value={manualForm.folio}
+                      onChange={(event) => setManualForm((form) => ({ ...form, folio: event.target.value }))}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="total">Total</label>
+                    <input
+                      id="total"
+                      inputMode="decimal"
+                      value={manualForm.total}
+                      onChange={(event) => setManualForm((form) => ({ ...form, total: event.target.value }))}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="iva">IVA</label>
+                    <input
+                      id="iva"
+                      inputMode="decimal"
+                      value={manualForm.iva}
+                      onChange={(event) => setManualForm((form) => ({ ...form, iva: event.target.value }))}
+                    />
+                  </div>
+                  <div className="segmented" aria-label="Metodo de pago">
+                    <button
+                      type="button"
+                      className={paymentType === "debit" ? "active" : ""}
+                      onClick={() => setPaymentType("debit")}
+                    >
+                      Debito
+                    </button>
+                    <button
+                      type="button"
+                      className={paymentType === "credit" ? "active" : ""}
+                      onClick={() => setPaymentType("credit")}
+                    >
+                      Credito
+                    </button>
+                  </div>
+                  <button className="button full" type="submit" disabled={busy === "manual"}>
+                    <FilePlus2 size={16} />
+                    Agregar ticket
                   </button>
-                  <button
-                    type="button"
-                    className={paymentType === "credit" ? "active" : ""}
-                    onClick={() => setPaymentType("credit")}
-                  >
-                    Credito
-                  </button>
-                </div>
-                <button className="button full" type="submit" disabled={busy === "manual"}>
-                  <FilePlus2 size={16} />
-                  Agregar ticket
-                </button>
-              </form>
-            </section>
+                </form>
+              </section>
+            )}
           </div>
 
           <section className="panel">
             <div className="panel-header">
-              <h3>Cola de factura</h3>
+              <h3>{isOperator ? "Mis tickets" : "Cola de factura"}</h3>
               <span className="status-pill submit_pending">{pendingCount} pendientes</span>
             </div>
             <div className="table-wrap">
@@ -431,19 +625,27 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
                   <thead>
                     <tr>
                       <th>Folio</th>
+                      {isAdmin && <th>Cliente</th>}
+                      {isAdmin && <th>Operador</th>}
                       <th>Total</th>
-                      <th>Pago</th>
+                      <th>IVA</th>
+                      {(isAdmin || isOperator) && <th>Comision</th>}
                       <th>Estado</th>
                       <th>Recibo</th>
-                      <th>Accion</th>
+                      {isAdmin && <th>Accion</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {tickets.map((ticket) => (
                       <tr key={ticket.id}>
                         <td className="num">{ticket.folio}</td>
+                        {isAdmin && <td>{ticket.clientName ?? "Gasolina"}</td>}
+                        {isAdmin && <td>{ticket.operatorName ?? "Manual"}</td>}
                         <td className="num">{formatCurrency(ticket.importeTotal)}</td>
-                        <td>{ticket.paymentType === "credit" ? "Credito" : "Debito"}</td>
+                        <td className="num">{ticket.iva === null ? "-" : formatCurrency(ticket.iva)}</td>
+                        {(isAdmin || isOperator) && (
+                          <td className="num">{formatCurrency(ticket.operatorCommission)}</td>
+                        )}
                         <td>
                           <span className={`status-pill ${ticket.status}`}>
                             {statusIcon(ticket.status)}
@@ -455,26 +657,28 @@ export function OperatorPortal({ initialAuthenticated, initialTickets }: Operato
                             {ticket.receiptFileName ?? "Manual"}
                           </span>
                         </td>
-                        <td>
-                          {(() => {
-                            const action = getRowActionState(ticket);
-                            if (action.kind === "submit") {
-                              return (
-                                <button
-                                  className="button secondary action-button"
-                                  type="button"
-                                  onClick={() => submit(ticket.id)}
-                                  disabled={busy === ticket.id}
-                                >
-                                  <Send size={14} />
-                                  {action.label}
-                                </button>
-                              );
-                            }
+                        {isAdmin && (
+                          <td>
+                            {(() => {
+                              const action = getRowActionState(ticket);
+                              if (action.kind === "submit") {
+                                return (
+                                  <button
+                                    className="button secondary action-button"
+                                    type="button"
+                                    onClick={() => submit(ticket.id)}
+                                    disabled={busy === ticket.id}
+                                  >
+                                    <Send size={14} />
+                                    {action.label}
+                                  </button>
+                                );
+                              }
 
-                            return <span className={`action-badge ${action.tone}`}>{action.label}</span>;
-                          })()}
-                        </td>
+                              return <span className={`action-badge ${action.tone}`}>{action.label}</span>;
+                            })()}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

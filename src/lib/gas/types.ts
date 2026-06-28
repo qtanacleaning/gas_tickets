@@ -1,4 +1,5 @@
 export type PaymentType = "debit" | "credit";
+export type UserRole = "admin" | "operator" | "client";
 
 export type GasTicketStatus =
   | "submit_pending"
@@ -19,10 +20,14 @@ export type ExtractedTicket = {
 export type GasTicketRecord = {
   id: string;
   receiptId: string | null;
+  clientId: string | null;
+  clientName?: string | null;
+  operatorName: string | null;
   folio: string;
   referencia: string;
   importeTotal: number;
   iva: number | null;
+  operatorCommission: number;
   rfc: string;
   cfdi: string;
   paymentType: PaymentType;
@@ -37,12 +42,24 @@ export type GasTicketRecord = {
 
 export type GasReceiptRecord = {
   id: string;
+  clientId: string | null;
   fileName: string;
   storagePath: string | null;
   mimeType: string;
   uploadedBy: string | null;
+  operatorName: string | null;
   status: GasReceiptStatus;
   extractedCount: number;
   errorMessage: string | null;
   createdAt: string;
+};
+
+export type GasClientRecord = {
+  id: string;
+  name: string;
+  rfc: string;
+  email: string;
+  taxRegime: string;
+  createdAt: string;
+  updatedAt: string;
 };

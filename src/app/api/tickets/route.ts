@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertOperatorRequest } from "@/lib/auth";
+import { assertRoleRequest } from "@/lib/auth";
 import { createManualTicket } from "@/lib/gas/workflows";
 import { listTickets } from "@/lib/gas/repository";
 
@@ -7,8 +7,8 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   try {
-    assertOperatorRequest(request);
-    return NextResponse.json({ tickets: await listTickets(75) });
+    const session = assertRoleRequest(request, ["admin", "operator", "client"]);
+    return NextResponse.json({ tickets: await listTickets(75, session) });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Could not list tickets." },
@@ -19,7 +19,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    assertOperatorRequest(request);
+    const session = assertRoleRequest(request, ["admin"]);
     const body = (await request.json()) as {
       folio?: unknown;
       total?: unknown;
@@ -31,6 +31,7 @@ export async function POST(request: Request) {
       total: body.total,
       iva: body.iva,
       paymentType: body.paymentType,
+      operatorName: session.name,
     });
     return NextResponse.json({ ticket }, { status: 201 });
   } catch (error) {

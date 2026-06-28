@@ -99,7 +99,7 @@ export async function findTicketAndClientData(
   const env = getAppEnv();
   const ticketField = `${env.petromayabReferencia.padStart(7, "0")}-${ticket.folio}`;
   const payload = {
-    rfc: env.petromayabRfc,
+    rfc: ticket.rfc,
     ticket: ticketField,
     amount: ticket.importeTotal,
     consumptionId: "",

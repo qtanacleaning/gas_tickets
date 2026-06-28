@@ -1,14 +1,14 @@
 import { OperatorPortal } from "@/components/OperatorPortal";
-import { hasOperatorSession } from "@/lib/auth";
+import { getCurrentSession } from "@/lib/auth";
 import { isSupabaseConfigured } from "@/lib/env";
 import { listTickets } from "@/lib/gas/repository";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const isAuthenticated = await hasOperatorSession();
+  const session = await getCurrentSession();
   const initialTickets =
-    isAuthenticated && isSupabaseConfigured() ? await listTickets(75).catch(() => []) : [];
+    session && isSupabaseConfigured() ? await listTickets(75, session).catch(() => []) : [];
 
-  return <OperatorPortal initialAuthenticated={isAuthenticated} initialTickets={initialTickets} />;
+  return <OperatorPortal initialSession={session} initialTickets={initialTickets} />;
 }

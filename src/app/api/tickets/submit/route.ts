@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertOperatorRequest } from "@/lib/auth";
+import { assertRoleRequest } from "@/lib/auth";
 import { submitPendingTickets, submitTicket } from "@/lib/gas/workflows";
 
 export const dynamic = "force-dynamic";
@@ -7,7 +7,7 @@ export const maxDuration = 60;
 
 export async function POST(request: Request) {
   try {
-    assertOperatorRequest(request);
+    assertRoleRequest(request, ["admin"]);
     const body = (await request.json().catch(() => ({}))) as { ticketId?: string };
     const result = body.ticketId ? await submitTicket(body.ticketId) : await submitPendingTickets(5);
     return NextResponse.json({ result });

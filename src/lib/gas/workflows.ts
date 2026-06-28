@@ -5,6 +5,7 @@ import {
   createReceipt,
   createTicket,
   downloadReceiptFile,
+  getClientById,
   getPendingTickets,
   getReceiptById,
   getTicketById,
@@ -16,7 +17,7 @@ import {
 import { extractTicketsFromImage } from "@/lib/gas/ocr";
 import { submitTicketToPetromayab } from "@/lib/gas/petromayab";
 import { validateTicketInput } from "@/lib/gas/validation";
-import type { GasTicketRecord } from "@/lib/gas/types";
+import type { GasClientRecord, GasTicketRecord } from "@/lib/gas/types";
 
 function sanitizeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "receipt.jpg";
@@ -38,6 +39,8 @@ export async function createManualTicket(input: {
   total: unknown;
   iva?: unknown;
   paymentType: unknown;
+  client?: GasClientRecord | null;
+  operatorName?: string | null;
 }): Promise<GasTicketRecord> {
   const validation = validateTicketInput(input);
   if (!validation.ok) {
@@ -46,6 +49,9 @@ export async function createManualTicket(input: {
 
   return createTicket({
     ticket: validation.ticket,
+    client: input.client,
+    clientId: input.client?.id,
+    operatorName: input.operatorName,
     status: "submit_pending",
   });
 }
@@ -53,6 +59,8 @@ export async function createManualTicket(input: {
 export async function ingestReceiptUpload(input: {
   file: File;
   uploadedBy?: string;
+  operatorName?: string | null;
+  clientId?: string | null;
 }): Promise<{ receiptId: string; ticketsCreated: number; skippedReason?: string }> {
   const storagePath = receiptStoragePath(input.file.name);
   await uploadReceiptFile(input.file, storagePath);
@@ -62,6 +70,8 @@ export async function ingestReceiptUpload(input: {
     storagePath,
     mimeType: input.file.type || "image/jpeg",
     uploadedBy: input.uploadedBy,
+    operatorName: input.operatorName ?? undefined,
+    clientId: input.clientId,
   });
 
   const result = await processReceiptOcr(receipt.id);
@@ -98,8 +108,16 @@ export async function processReceiptOcr(
     }
 
     let created = 0;
+    const client = receipt.clientId ? await getClientById(receipt.clientId) : null;
     for (const ticket of ocr.tickets) {
-      await createTicket({ receiptId: receipt.id, ticket, status: "submit_pending" });
+      await createTicket({
+        receiptId: receipt.id,
+        clientId: receipt.clientId,
+        operatorName: receipt.operatorName,
+        client,
+        ticket,
+        status: "submit_pending",
+      });
       created += 1;
     }
 

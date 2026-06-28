@@ -313,6 +313,10 @@ button:disabled {
   background: var(--color-surface-alt);
 }
 
+.role-tabs {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .segmented button {
   min-height: 34px;
   border: 0;
@@ -360,7 +364,7 @@ button:disabled {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 760px;
+  min-width: 900px;
 }
 
 th,
