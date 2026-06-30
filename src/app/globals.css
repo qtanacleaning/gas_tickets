@@ -259,6 +259,102 @@ button:disabled {
   background: #F5F5F3;
 }
 
+.upload-queue {
+  display: grid;
+  gap: 10px;
+}
+
+.upload-queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.upload-queue-list {
+  display: grid;
+  gap: 8px;
+}
+
+.upload-queue-item {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 10px;
+  min-height: 74px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px;
+  background: var(--color-surface-alt);
+}
+
+.upload-queue-item img {
+  width: 58px;
+  height: 58px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #FFFFFF;
+}
+
+.upload-queue-item.error {
+  border-color: color-mix(in srgb, var(--color-error) 24%, var(--color-border));
+}
+
+.upload-queue-meta {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+  min-width: 0;
+}
+
+.upload-file-name,
+.upload-queue-note {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-file-name {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.upload-queue-note {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.link-button {
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  padding: 0;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: #FFFFFF;
+  color: var(--color-muted);
+}
+
+.icon-button:hover {
+  border-color: color-mix(in srgb, var(--color-error) 28%, var(--color-border));
+  color: var(--color-error);
+}
+
 .button {
   display: inline-flex;
   align-items: center;
@@ -423,6 +519,12 @@ td {
   color: var(--color-warn);
 }
 
+.status-pill.queued,
+.status-pill.uploading {
+  background: var(--color-warn-bg);
+  color: var(--color-warn);
+}
+
 .status-pill.submitted,
 .status-pill.already_invoiced {
   background: var(--color-success-bg);
@@ -430,7 +532,8 @@ td {
 }
 
 .status-pill.failed,
-.status-pill.needs_review {
+.status-pill.needs_review,
+.status-pill.error {
   background: var(--color-error-bg);
   color: var(--color-error);
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Camera,
@@ -13,6 +13,7 @@ import {
   LogOut,
   RefreshCw,
   Send,
+  Trash2,
   Upload,
   UserRound,
   UserPlus,
@@ -36,6 +37,18 @@ type OperatorPortalProps = {
 type Message = {
   type: "success" | "error" | "neutral";
   text: string;
+};
+
+type UploadQueueStatus = "queued" | "uploading" | "done" | "error";
+
+type UploadQueueItem = {
+  id: string;
+  file: File;
+  previewUrl: string;
+  status: UploadQueueStatus;
+  ticketsCreated?: number;
+  skippedReason?: string;
+  error?: string;
 };
 
 type RowActionState =
@@ -79,6 +92,20 @@ function getRowActionState(ticket: GasTicketRecord): RowActionState {
   return { kind: "label", label: "Revisar", tone: "error" };
 }
 
+function uploadStatusText(item: UploadQueueItem): string {
+  if (item.status === "queued") return "En cola";
+  if (item.status === "uploading") return "Procesando";
+  if (item.status === "error") return "Error";
+  if (item.skippedReason) return "Revisar";
+  return "Listo";
+}
+
+function uploadStatusIcon(item: UploadQueueItem) {
+  if (item.status === "done") return <CheckCircle2 size={14} />;
+  if (item.status === "error") return <AlertTriangle size={14} />;
+  return <Clock3 size={14} />;
+}
+
 export function OperatorPortal({ initialSession, initialTickets }: OperatorPortalProps) {
   const [session, setSession] = useState<AppSession | null>(initialSession);
   const [loginRole, setLoginRole] = useState<UserRole>("operator");
@@ -86,8 +113,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
   const [loginName, setLoginName] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
   const [uploadedBy, setUploadedBy] = useState("");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
   const [tickets, setTickets] = useState<GasTicketRecord[]>(initialTickets.map(normalizeTicket));
   const [paymentType, setPaymentType] = useState<PaymentType>("debit");
   const [manualForm, setManualForm] = useState({ folio: "", total: "", iva: "" });
@@ -101,6 +127,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
   });
   const [message, setMessage] = useState<Message | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const uploadQueueRef = useRef<UploadQueueItem[]>([]);
 
   const isAdmin = session?.role === "admin";
   const isOperator = session?.role === "operator";
@@ -113,6 +140,10 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
   const commissionTotal = useMemo(
     () => tickets.reduce((sum, ticket) => sum + ticket.operatorCommission, 0),
     [tickets],
+  );
+  const queuedUploadCount = useMemo(
+    () => uploadQueue.filter((item) => item.status === "queued" || item.status === "error").length,
+    [uploadQueue],
   );
 
   async function loadTickets() {
@@ -133,10 +164,16 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
   }
 
   useEffect(() => {
+    uploadQueueRef.current = uploadQueue;
+  }, [uploadQueue]);
+
+  useEffect(() => {
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      for (const item of uploadQueueRef.current) {
+        URL.revokeObjectURL(item.previewUrl);
+      }
     };
-  }, [previewUrl]);
+  }, []);
 
   useEffect(() => {
     if (!isClient) return;
@@ -166,11 +203,36 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     }
   }, [isAdmin]);
 
-  function setReceiptFile(file: File | null) {
-    setSelectedFile(file);
-    setPreviewUrl((current) => {
-      if (current) URL.revokeObjectURL(current);
-      return file ? URL.createObjectURL(file) : null;
+  function addReceiptFiles(files: FileList | null) {
+    const nextFiles = Array.from(files ?? []);
+    if (nextFiles.length === 0) return;
+
+    setUploadQueue((queue) => [
+      ...queue,
+      ...nextFiles.map((file) => ({
+        id: `${Date.now()}-${crypto.randomUUID()}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+        status: "queued" as const,
+      })),
+    ]);
+    setMessage({ type: "neutral", text: `${nextFiles.length} recibo${nextFiles.length === 1 ? "" : "s"} en cola.` });
+  }
+
+  function removeQueuedUpload(id: string) {
+    setUploadQueue((queue) => {
+      const item = queue.find((candidate) => candidate.id === id);
+      if (item) URL.revokeObjectURL(item.previewUrl);
+      return queue.filter((candidate) => candidate.id !== id);
+    });
+  }
+
+  function clearFinishedUploads() {
+    setUploadQueue((queue) => {
+      for (const item of queue) {
+        if (item.status === "done") URL.revokeObjectURL(item.previewUrl);
+      }
+      return queue.filter((item) => item.status !== "done");
     });
   }
 
@@ -277,41 +339,86 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
 
   async function uploadReceipt(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedFile) {
-      setMessage({ type: "error", text: "Selecciona una imagen del recibo." });
+    const uploads = uploadQueue.filter((item) => item.status === "queued" || item.status === "error");
+    if (uploads.length === 0) {
+      setMessage({ type: "error", text: "Selecciona una o mas imagenes del recibo." });
       return;
     }
-
-    const formData = new FormData();
-    formData.set("receipt", selectedFile);
-    formData.set("uploadedBy", uploadedBy || session?.name || "");
-    if (session?.clientId) formData.set("clientId", session.clientId);
 
     setBusy("upload");
-    const response = await fetch("/api/tickets/upload", {
-      method: "POST",
-      body: formData,
-    });
-    const data = (await response.json()) as {
-      ticketsCreated?: number;
-      skippedReason?: string;
-      error?: string;
-    };
-    setBusy(null);
+    let successCount = 0;
+    let errorCount = 0;
+    let ticketsCreated = 0;
 
-    if (!response.ok) {
-      setMessage({ type: "error", text: data.error ?? "No se pudo subir el recibo." });
-      return;
+    for (const item of uploads) {
+      setUploadQueue((queue) =>
+        queue.map((candidate) =>
+          candidate.id === item.id
+            ? { ...candidate, status: "uploading", error: undefined, skippedReason: undefined }
+            : candidate,
+        ),
+      );
+
+      const formData = new FormData();
+      formData.set("receipt", item.file);
+      formData.set("uploadedBy", uploadedBy || session?.name || "");
+      if (session?.clientId) formData.set("clientId", session.clientId);
+
+      try {
+        const response = await fetch("/api/tickets/upload", {
+          method: "POST",
+          body: formData,
+        });
+        const data = (await response.json()) as {
+          ticketsCreated?: number;
+          skippedReason?: string;
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(data.error ?? "No se pudo subir el recibo.");
+        }
+
+        successCount += 1;
+        ticketsCreated += data.ticketsCreated ?? 0;
+        setUploadQueue((queue) =>
+          queue.map((candidate) =>
+            candidate.id === item.id
+              ? {
+                  ...candidate,
+                  status: "done",
+                  ticketsCreated: data.ticketsCreated ?? 0,
+                  skippedReason: data.skippedReason,
+                }
+              : candidate,
+          ),
+        );
+      } catch (error) {
+        errorCount += 1;
+        setUploadQueue((queue) =>
+          queue.map((candidate) =>
+            candidate.id === item.id
+              ? {
+                  ...candidate,
+                  status: "error",
+                  error: error instanceof Error ? error.message : "No se pudo subir el recibo.",
+                }
+              : candidate,
+          ),
+        );
+      }
     }
 
-    setReceiptFile(null);
+    setBusy(null);
+
     setMessage({
-      type: data.skippedReason ? "neutral" : "success",
-      text: data.skippedReason
-        ? `Recibo guardado. ${data.skippedReason}`
-        : `Recibo guardado. Tickets detectados: ${data.ticketsCreated ?? 0}.`,
+      type: errorCount > 0 ? "error" : "success",
+      text:
+        errorCount > 0
+          ? `${successCount} recibo${successCount === 1 ? "" : "s"} guardado${successCount === 1 ? "" : "s"}, ${errorCount} con error.`
+          : `${successCount} recibo${successCount === 1 ? "" : "s"} guardado${successCount === 1 ? "" : "s"}. Tickets detectados: ${ticketsCreated}.`,
     });
-    await loadTickets();
+    if (successCount > 0) await loadTickets();
   }
 
   async function createManual(event: React.FormEvent<HTMLFormElement>) {
@@ -598,25 +705,70 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               </div>
               <form className="panel-body stack" onSubmit={uploadReceipt}>
                 <label className="file-drop">
-                  {previewUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img className="preview" src={previewUrl} alt="Receipt preview" />
-                  ) : (
-                    <span className="drop-inner">
-                      <Camera size={28} />
-                      <span>
-                        <strong>Foto del recibo</strong>
-                        JPG, PNG o WebP
-                      </span>
+                  <span className="drop-inner">
+                    <Camera size={28} />
+                    <span>
+                      <strong>Fotos de recibos</strong>
+                      JPG, PNG o WebP
                     </span>
-                  )}
+                  </span>
                   <input
                     type="file"
                     accept="image/jpeg,image/png,image/webp"
                     capture="environment"
-                    onChange={(event) => setReceiptFile(event.target.files?.[0] ?? null)}
+                    multiple
+                    onChange={(event) => {
+                      addReceiptFiles(event.target.files);
+                      event.target.value = "";
+                    }}
                   />
                 </label>
+                {uploadQueue.length > 0 && (
+                  <div className="upload-queue">
+                    <div className="upload-queue-header">
+                      <span>{uploadQueue.length} en cola</span>
+                      {uploadQueue.some((item) => item.status === "done") && (
+                        <button className="link-button" type="button" onClick={clearFinishedUploads}>
+                          Limpiar listos
+                        </button>
+                      )}
+                    </div>
+                    <div className="upload-queue-list">
+                      {uploadQueue.map((item) => (
+                        <div className={`upload-queue-item ${item.status}`} key={item.id}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={item.previewUrl} alt="" />
+                          <div className="upload-queue-meta">
+                            <span className="upload-file-name" title={item.file.name}>
+                              {item.file.name}
+                            </span>
+                            <span className={`status-pill ${item.status === "done" ? "submitted" : item.status}`}>
+                              {uploadStatusIcon(item)}
+                              {uploadStatusText(item)}
+                            </span>
+                            {(item.error || item.skippedReason || item.status === "done") && (
+                              <span className="upload-queue-note">
+                                {item.error ??
+                                  item.skippedReason ??
+                                  `Tickets detectados: ${item.ticketsCreated ?? 0}`}
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            className="icon-button"
+                            type="button"
+                            onClick={() => removeQueuedUpload(item.id)}
+                            disabled={item.status === "uploading"}
+                            aria-label={`Quitar ${item.file.name}`}
+                            title="Quitar"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {!isClient && (
                   <div className="field">
                     <label htmlFor="uploadedBy">Operador</label>
@@ -631,10 +783,10 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                 <button
                   className="button full"
                   type="submit"
-                  disabled={busy === "upload" || (isClient && !session.clientId)}
+                  disabled={busy === "upload" || queuedUploadCount === 0 || (isClient && !session.clientId)}
                 >
                   <Upload size={16} />
-                  Subir recibo
+                  {queuedUploadCount > 1 ? `Subir ${queuedUploadCount} recibos` : "Subir recibo"}
                 </button>
               </form>
             </section>

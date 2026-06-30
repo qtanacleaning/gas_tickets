@@ -16,15 +16,15 @@ import type {
 
 type TicketRow = {
   id: string;
-  client_id: string | null;
+  client_id?: string | null;
   receipt_id: string | null;
-  operator_id: string | null;
-  operator_name: string | null;
+  operator_id?: string | null;
+  operator_name?: string | null;
   folio: string;
   referencia: string;
   importe_total: string | number;
   iva: string | number | null;
-  operator_commission: string | number | null;
+  operator_commission?: string | number | null;
   rfc: string;
   cfdi: string;
   payment_type: "debit" | "credit";
@@ -39,13 +39,13 @@ type TicketRow = {
 
 type ReceiptRow = {
   id: string;
-  client_id: string | null;
-  operator_id: string | null;
+  client_id?: string | null;
+  operator_id?: string | null;
   file_name: string;
   storage_path: string | null;
   mime_type: string;
   uploaded_by: string | null;
-  operator_name: string | null;
+  operator_name?: string | null;
   status: GasReceiptStatus;
   extracted_count: number;
   error_message: string | null;
@@ -75,13 +75,13 @@ type OperatorRow = {
 function mapReceipt(row: ReceiptRow): GasReceiptRecord {
   return {
     id: row.id,
-    clientId: row.client_id,
-    operatorId: row.operator_id,
+    clientId: row.client_id ?? null,
+    operatorId: row.operator_id ?? null,
     fileName: row.file_name,
     storagePath: row.storage_path,
     mimeType: row.mime_type,
     uploadedBy: row.uploaded_by,
-    operatorName: row.operator_name,
+    operatorName: row.operator_name ?? row.uploaded_by ?? null,
     status: row.status,
     extractedCount: row.extracted_count,
     errorMessage: row.error_message,
@@ -120,16 +120,16 @@ function mapOperator(row: OperatorRow): GasOperatorRecord {
 function mapTicket(row: TicketRow, clientName?: string | null): GasTicketRecord {
   return {
     id: row.id,
-    clientId: row.client_id,
+    clientId: row.client_id ?? null,
     clientName: clientName ?? null,
     receiptId: row.receipt_id,
-    operatorId: row.operator_id,
-    operatorName: row.operator_name,
+    operatorId: row.operator_id ?? null,
+    operatorName: row.operator_name ?? null,
     folio: row.folio,
     referencia: row.referencia,
     importeTotal: Number(row.importe_total),
     iva: row.iva === null ? null : Number(row.iva),
-    operatorCommission: row.operator_commission === null ? 0 : Number(row.operator_commission),
+    operatorCommission: row.operator_commission == null ? 0 : Number(row.operator_commission),
     rfc: row.rfc,
     cfdi: row.cfdi,
     paymentType: row.payment_type,
@@ -154,6 +154,12 @@ function operatorNameKey(name: string): string {
 function hashOperatorPin(pin: string): string {
   const { sessionSecret } = getAppEnv();
   return crypto.createHmac("sha256", sessionSecret).update(pin.trim()).digest("base64url");
+}
+
+function missingSchemaColumn(error: { message?: string } | null, tableName: string): string | null {
+  if (!error?.message) return null;
+  const match = error.message.match(/Could not find the '([^']+)' column of '([^']+)' in the schema cache/i);
+  return match?.[2] === tableName ? match[1] : null;
 }
 
 export async function uploadReceiptFile(file: File, storagePath: string): Promise<void> {
@@ -186,23 +192,32 @@ export async function createReceipt(input: {
   clientId?: string | null;
 }): Promise<GasReceiptRecord> {
   const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("gas_receipts")
-    .insert({
-      file_name: input.fileName,
-      storage_path: input.storagePath,
-      mime_type: input.mimeType,
-      uploaded_by: input.uploadedBy || null,
-      operator_id: input.operatorId ?? null,
-      operator_name: input.operatorName || input.uploadedBy || null,
-      client_id: input.clientId ?? null,
-      status: "ocr_pending",
-    })
-    .select("*")
-    .single();
+  const payload: Record<string, unknown> = {
+    file_name: input.fileName,
+    storage_path: input.storagePath,
+    mime_type: input.mimeType,
+    uploaded_by: input.uploadedBy || input.operatorName || null,
+    operator_id: input.operatorId ?? null,
+    operator_name: input.operatorName || input.uploadedBy || null,
+    client_id: input.clientId ?? null,
+    status: "ocr_pending",
+  };
 
-  if (error) throw new Error(`Receipt insert failed: ${error.message}`);
-  return mapReceipt(data as ReceiptRow);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const { data, error } = await supabase.from("gas_receipts").insert(payload).select("*").single();
+
+    if (!error) return mapReceipt(data as ReceiptRow);
+
+    const missingColumn = missingSchemaColumn(error, "gas_receipts");
+    if (missingColumn && Object.hasOwn(payload, missingColumn)) {
+      delete payload[missingColumn];
+      continue;
+    }
+
+    throw new Error(`Receipt insert failed: ${error.message}`);
+  }
+
+  throw new Error("Receipt insert failed: Supabase schema is missing required receipt columns.");
 }
 
 export async function updateReceipt(
@@ -260,33 +275,45 @@ export async function createTicket(input: {
   const rfc = input.client?.rfc ?? env.petromayabRfc;
   const cfdi = "Gastos en General";
   const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("gas_tickets")
-    .insert({
-      receipt_id: input.receiptId ?? null,
-      client_id: input.clientId ?? input.client?.id ?? null,
-      operator_id: input.operatorId ?? null,
-      operator_name: input.operatorName ?? null,
-      folio: input.ticket.folio,
-      referencia: env.petromayabReferencia,
-      importe_total: input.ticket.total,
-      iva: input.ticket.iva ?? null,
-      operator_commission: commissionFromIva(input.ticket.iva),
-      rfc,
-      cfdi,
-      payment_type: input.ticket.paymentType,
-      status: input.status ?? "submit_pending",
-    })
-    .select("*, gas_receipts(file_name)")
-    .single();
+  const payload: Record<string, unknown> = {
+    receipt_id: input.receiptId ?? null,
+    client_id: input.clientId ?? input.client?.id ?? null,
+    operator_id: input.operatorId ?? null,
+    operator_name: input.operatorName ?? null,
+    folio: input.ticket.folio,
+    referencia: env.petromayabReferencia,
+    importe_total: input.ticket.total,
+    iva: input.ticket.iva ?? null,
+    operator_commission: commissionFromIva(input.ticket.iva),
+    rfc,
+    cfdi,
+    payment_type: input.ticket.paymentType,
+    status: input.status ?? "submit_pending",
+  };
 
-  if (error) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { data, error } = await supabase
+      .from("gas_tickets")
+      .insert(payload)
+      .select("*, gas_receipts(file_name)")
+      .single();
+
+    if (!error) return mapTicket(data as TicketRow, input.client?.name ?? null);
+
     if (error.code === "23505") {
       throw new Error(`Duplicate ticket: folio ${input.ticket.folio} for ${input.ticket.total}`);
     }
+
+    const missingColumn = missingSchemaColumn(error, "gas_tickets");
+    if (missingColumn && Object.hasOwn(payload, missingColumn)) {
+      delete payload[missingColumn];
+      continue;
+    }
+
     throw new Error(`Ticket insert failed: ${error.message}`);
   }
-  return mapTicket(data as TicketRow, input.client?.name ?? null);
+
+  throw new Error("Ticket insert failed: Supabase schema is missing required ticket columns.");
 }
 
 async function loadClientNames(clientIds: string[]): Promise<Map<string, string>> {
