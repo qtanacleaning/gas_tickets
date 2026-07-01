@@ -118,6 +118,9 @@ function mapOperator(row: OperatorRow): GasOperatorRecord {
 }
 
 function mapTicket(row: TicketRow, clientName?: string | null): GasTicketRecord {
+  const iva = row.iva === null ? null : Number(row.iva);
+  const storedCommission = row.operator_commission == null ? null : Number(row.operator_commission);
+
   return {
     id: row.id,
     clientId: row.client_id ?? null,
@@ -128,8 +131,8 @@ function mapTicket(row: TicketRow, clientName?: string | null): GasTicketRecord 
     folio: row.folio,
     referencia: row.referencia,
     importeTotal: Number(row.importe_total),
-    iva: row.iva === null ? null : Number(row.iva),
-    operatorCommission: row.operator_commission == null ? 0 : Number(row.operator_commission),
+    iva,
+    operatorCommission: storedCommission && storedCommission > 0 ? storedCommission : commissionFromIva(iva ?? undefined),
     rfc: row.rfc,
     cfdi: row.cfdi,
     paymentType: row.payment_type,
@@ -343,8 +346,12 @@ export async function listTickets(limit = 50, session?: AppSession): Promise<Gas
 
   let query = buildBaseQuery();
 
-  if (session?.role === "operator" && session.operatorId) {
-    query = query.eq("operator_id", session.operatorId);
+  if (session?.role === "operator") {
+    if (session.operatorId) {
+      query = query.eq("operator_id", session.operatorId);
+    } else if (session.name) {
+      query = query.eq("operator_name", session.name);
+    }
   }
 
   if (session?.role === "client") {
