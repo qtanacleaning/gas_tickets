@@ -51,6 +51,12 @@ type UploadQueueItem = {
   error?: string;
 };
 
+type SubmitResult = {
+  ticketId?: string;
+  status?: string;
+  error?: string;
+};
+
 type RowActionState =
   | { kind: "submit"; label: string }
   | { kind: "label"; label: string; tone: "success" | "neutral" | "error" };
@@ -104,6 +110,27 @@ function uploadStatusIcon(item: UploadQueueItem) {
   if (item.status === "done") return <CheckCircle2 size={14} />;
   if (item.status === "error") return <AlertTriangle size={14} />;
   return <Clock3 size={14} />;
+}
+
+function summarizeSubmitResults(results: SubmitResult[]): Message {
+  if (results.length === 0) {
+    return { type: "neutral", text: "No habia tickets pendientes para enviar." };
+  }
+
+  const submitted = results.filter((result) => result.status === "submitted").length;
+  const alreadyInvoiced = results.filter((result) => result.status === "already_invoiced").length;
+  const failed = results.filter((result) => result.status === "failed" || result.error).length;
+  const ok = submitted + alreadyInvoiced;
+  const parts = [
+    `${ok} enviado${ok === 1 ? "" : "s"}`,
+    alreadyInvoiced > 0 ? `${alreadyInvoiced} ya facturado${alreadyInvoiced === 1 ? "" : "s"}` : null,
+    failed > 0 ? `${failed} con error` : null,
+  ].filter(Boolean);
+
+  return {
+    type: failed > 0 ? "error" : "success",
+    text: `Cola procesada: ${parts.join(", ")}.`,
+  };
 }
 
 export function OperatorPortal({ initialSession, initialTickets }: OperatorPortalProps) {
@@ -449,7 +476,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
       headers: { "content-type": "application/json" },
       body: JSON.stringify(ticketId ? { ticketId } : {}),
     });
-    const data = (await response.json()) as { error?: string };
+    const data = (await response.json()) as { result?: SubmitResult | SubmitResult[]; error?: string };
     setBusy(null);
 
     if (!response.ok) {
@@ -458,7 +485,11 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
       return;
     }
 
-    setMessage({ type: "success", text: ticketId ? "Ticket enviado." : "Cola enviada." });
+    if (ticketId) {
+      setMessage({ type: "success", text: "Ticket enviado." });
+    } else {
+      setMessage(summarizeSubmitResults(Array.isArray(data.result) ? data.result : []));
+    }
     await loadTickets();
   }
 
