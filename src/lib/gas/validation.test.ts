@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePaymentType, validateTicketInput } from "@/lib/gas/validation";
+import { normalizePaymentType, normalizeTicketDate, validateTicketInput } from "@/lib/gas/validation";
 
 describe("gas ticket validation", () => {
   it("normalizes Spanish payment labels", () => {
@@ -30,5 +30,11 @@ describe("gas ticket validation", () => {
     });
 
     expect(result.ok).toBe(false);
+  });
+
+  it("normalizes Mexican ticket dates", () => {
+    expect(normalizeTicketDate("14/07/2026")).toBe("2026-07-14");
+    expect(normalizeTicketDate("2026-07-14")).toBe("2026-07-14");
+    expect(normalizeTicketDate("31/02/2026")).toBeNull();
   });
 });

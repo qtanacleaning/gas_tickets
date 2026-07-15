@@ -21,9 +21,9 @@ This project includes:
 
 ## Roles
 
-- Admin: full control, manual tickets, queue review, and factura submission.
-- Operator: log in with the name/PIN configured in environment variables or assigned by an admin, upload receipt photos, and see commission. Commission is calculated as 10% of the ticket IVA.
-- Client: log in with the email/password configured in environment variables. Name, RFC, email, and tax regime are selected automatically from that account.
+- Admin: manages operator and client accounts, manual tickets, the submission queue, monthly reports, and commission payments.
+- Operator: logs in with a name/PIN, selects the client account for each upload, and sees earned, paid, and pending commission. Commission is calculated as 10% of the ticket IVA.
+- Client: logs in with the email/password created by an admin and maintains the name, RFC, email, and tax regime used for ticket submission.
 
 ## Environment Accounts
 
@@ -40,7 +40,7 @@ OPERATOR_1_NAME=Manuel
 OPERATOR_1_PIN=1234
 ```
 
-Clients can be configured with either:
+Client accounts should normally be created by an admin in the portal. Environment accounts remain supported as a migration fallback and can be configured with either:
 
 ```env
 CLIENT_ACCOUNTS_JSON=[{"name":"Client Company","email":"client@example.com","password":"secret","rfc":"XAXX010101000","taxRegime":"601"}]
@@ -56,7 +56,11 @@ CLIENT_1_RFC=XAXX010101000
 CLIENT_1_TAX_REGIME=601
 ```
 
-When a client logs in, the app automatically uses that client's RFC and fiscal data for uploaded receipts.
+Every new receipt or manual ticket must be assigned to a client. The app submits the selected client's RFC instead of using a hardcoded RFC.
+
+## Database updates
+
+Run all migrations in `supabase/migrations/` in filename order. The July 2026 migration adds ticket dates, database-backed client credentials, monthly reporting fields, and the commission payment ledger. Deploying the application code before that migration will leave the new account and commission endpoints unavailable.
 
 ## Local Development
 
@@ -73,12 +77,17 @@ Open `http://localhost:3000`.
 - `DELETE /api/session` - logout
 - `GET /api/operators` - admin-only operator list
 - `POST /api/operators` - admin-only operator create/update with PIN
+- `GET /api/clients` - admin/operator client account list
+- `POST /api/clients` - admin-only client account create/update
 - `GET /api/client-profile` - load the current client's fiscal profile
 - `POST /api/client-profile` - save the current client's fiscal profile
 - `GET /api/tickets` - list recent tickets
 - `POST /api/tickets` - admin-only manual ticket creation
 - `POST /api/tickets/upload` - upload a receipt image
 - `POST /api/tickets/submit` - admin-only submit for one ticket or a small pending batch
+- `GET /api/reports/monthly` - role-scoped monthly submitted-ticket report
+- `GET /api/commissions` - admin/operator commission balances
+- `POST /api/commissions` - admin-only commission payment entry
 - `GET /api/cron/ocr` - process queued receipt OCR
 - `GET /api/cron/submit` - submit pending tickets
 

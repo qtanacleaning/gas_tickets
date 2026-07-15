@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  BarChart3,
+  Building2,
+  CalendarDays,
   Camera,
   CheckCircle2,
   Clock3,
@@ -17,13 +20,16 @@ import {
   Upload,
   UserRound,
   UserPlus,
+  WalletCards,
 } from "lucide-react";
 import type { AppSession } from "@/lib/auth";
 import type {
+  CommissionSummary,
   GasClientRecord,
   GasOperatorRecord,
   GasTicketRecord,
   GasTicketStatus,
+  MonthlyTicketReport,
   PaymentType,
   UserRole,
 } from "@/lib/gas/types";
@@ -87,7 +93,23 @@ function normalizeTicket(ticket: GasTicketRecord): GasTicketRecord {
     importeTotal: Number(ticket.importeTotal),
     iva: ticket.iva === null ? null : Number(ticket.iva),
     operatorCommission: Number(ticket.operatorCommission ?? 0),
+    commissionStatus: ticket.commissionStatus ?? "pending",
+    commissionPaidAmount: Number(ticket.commissionPaidAmount ?? 0),
+    ticketDate: ticket.ticketDate ?? ticket.createdAt.slice(0, 10),
   };
+}
+
+function formatTicketDate(value: string): string {
+  return new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short", year: "numeric" }).format(
+    new Date(`${value}T12:00:00`),
+  );
+}
+
+function formatMonth(value: string): string {
+  const [year, month] = value.split("-").map(Number);
+  return new Intl.DateTimeFormat("es-MX", { month: "long", year: "numeric" }).format(
+    new Date(year, month - 1, 1),
+  );
 }
 
 function getRowActionState(ticket: GasTicketRecord): RowActionState {
@@ -143,9 +165,26 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
   const [tickets, setTickets] = useState<GasTicketRecord[]>(initialTickets.map(normalizeTicket));
   const [paymentType, setPaymentType] = useState<PaymentType>("debit");
-  const [manualForm, setManualForm] = useState({ folio: "", total: "", iva: "" });
+  const [manualForm, setManualForm] = useState({
+    folio: "",
+    total: "",
+    iva: "",
+    ticketDate: new Date().toISOString().slice(0, 10),
+  });
   const [operatorForm, setOperatorForm] = useState({ name: "", pin: "" });
   const [operators, setOperators] = useState<GasOperatorRecord[]>([]);
+  const [clients, setClients] = useState<GasClientRecord[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState(initialSession?.clientId ?? "");
+  const [monthlyReport, setMonthlyReport] = useState<MonthlyTicketReport[]>([]);
+  const [commissions, setCommissions] = useState<CommissionSummary[]>([]);
+  const [clientAccountForm, setClientAccountForm] = useState({
+    name: "",
+    rfc: "",
+    email: "",
+    taxRegime: "",
+    password: "",
+  });
+  const [commissionPayment, setCommissionPayment] = useState({ operatorKey: "", amount: "" });
   const [clientForm, setClientForm] = useState({
     name: initialSession?.name ?? "",
     rfc: "",
@@ -160,17 +199,22 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
   const isOperator = session?.role === "operator";
   const isClient = session?.role === "client";
 
-  const pendingCount = useMemo(
+  const pendingCount = tickets.length;
+  const submittableCount = useMemo(
     () => tickets.filter((ticket) => ticket.status === "submit_pending").length,
     [tickets],
   );
-  const commissionTotal = useMemo(
-    () => tickets.reduce((sum, ticket) => sum + ticket.operatorCommission, 0),
-    [tickets],
-  );
+  const commissionTotal = useMemo(() => commissions.reduce((sum, item) => sum + item.pendingAmount, 0), [commissions]);
   const queuedUploadCount = useMemo(
     () => uploadQueue.filter((item) => item.status === "queued" || item.status === "error").length,
     [uploadQueue],
+  );
+  const selectedCommission = useMemo(
+    () =>
+      commissions.find(
+        (item) => (item.operatorId ?? `name:${item.operatorName}`) === commissionPayment.operatorKey,
+      ) ?? null,
+    [commissionPayment.operatorKey, commissions],
   );
 
   async function loadTickets() {
@@ -188,6 +232,38 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
       setTickets((data.tickets ?? []).map(normalizeTicket));
     }
     setBusy(null);
+  }
+
+  async function loadClients() {
+    const response = await fetch("/api/clients", { cache: "no-store" });
+    if (!response.ok) return;
+    const data = (await response.json()) as { clients?: GasClientRecord[] };
+    const nextClients = data.clients ?? [];
+    setClients(nextClients);
+    setSelectedClientId((current) => current || nextClients[0]?.id || "");
+  }
+
+  async function loadReports() {
+    const response = await fetch("/api/reports/monthly", { cache: "no-store" });
+    if (!response.ok) return;
+    const data = (await response.json()) as { months?: MonthlyTicketReport[] };
+    setMonthlyReport(data.months ?? []);
+  }
+
+  async function loadCommissions() {
+    const response = await fetch("/api/commissions", { cache: "no-store" });
+    if (!response.ok) return;
+    const data = (await response.json()) as { commissions?: CommissionSummary[] };
+    const nextCommissions = data.commissions ?? [];
+    setCommissions(nextCommissions);
+    setCommissionPayment((current) => ({
+      ...current,
+      operatorKey:
+        current.operatorKey ||
+        (nextCommissions[0]
+          ? nextCommissions[0].operatorId ?? `name:${nextCommissions[0].operatorName}`
+          : ""),
+    }));
   }
 
   useEffect(() => {
@@ -225,10 +301,14 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
   }, [isClient]);
 
   useEffect(() => {
-    if (isAdmin) {
-      void loadOperators();
+    if (!session) return;
+    void loadReports();
+    if (isAdmin) void loadOperators();
+    if (isAdmin || isOperator) {
+      void loadClients();
+      void loadCommissions();
     }
-  }, [isAdmin]);
+  }, [isAdmin, isOperator, session]);
 
   function addReceiptFiles(files: FileList | null) {
     const nextFiles = Array.from(files ?? []);
@@ -288,6 +368,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     setMessage(null);
     setSession(data.session);
     setUploadedBy(data.session.name ?? "");
+    setSelectedClientId(data.session.clientId ?? "");
     if (data.session.role === "client") {
       setClientForm((form) => ({
         ...form,
@@ -302,6 +383,9 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     await fetch("/api/session", { method: "DELETE" });
     setSession(null);
     setTickets([]);
+    setClients([]);
+    setMonthlyReport([]);
+    setCommissions([]);
     setMessage(null);
   }
 
@@ -331,6 +415,58 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     setOperatorForm({ name: "", pin: "" });
     setMessage({ type: "success", text: `Operador ${data.operator.name} guardado.` });
     await loadOperators();
+  }
+
+  async function saveClientAccount(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy("client-account");
+    const response = await fetch("/api/clients", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(clientAccountForm),
+    });
+    const data = (await response.json()) as { client?: GasClientRecord; error?: string };
+    setBusy(null);
+
+    if (!response.ok || !data.client) {
+      setMessage({ type: "error", text: data.error ?? "No se pudo guardar la cuenta del cliente." });
+      return;
+    }
+
+    setClientAccountForm({ name: "", rfc: "", email: "", taxRegime: "", password: "" });
+    setSelectedClientId(data.client.id);
+    setMessage({ type: "success", text: `Cuenta de ${data.client.name} guardada.` });
+    await loadClients();
+  }
+
+  async function payCommission(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const summary = commissions.find(
+      (item) => (item.operatorId ?? `name:${item.operatorName}`) === commissionPayment.operatorKey,
+    );
+    if (!summary) return;
+
+    setBusy("commission-payment");
+    const response = await fetch("/api/commissions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        operatorId: summary.operatorId,
+        operatorName: summary.operatorName,
+        amount: commissionPayment.amount,
+      }),
+    });
+    const data = (await response.json()) as { paymentId?: string; error?: string };
+    setBusy(null);
+
+    if (!response.ok || !data.paymentId) {
+      setMessage({ type: "error", text: data.error ?? "No se pudo registrar el pago." });
+      return;
+    }
+
+    setCommissionPayment((current) => ({ ...current, amount: "" }));
+    setMessage({ type: "success", text: `Pago de comision registrado para ${summary.operatorName}.` });
+    await loadCommissions();
   }
 
   async function saveClientProfile(event: React.FormEvent<HTMLFormElement>) {
@@ -389,7 +525,8 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
       const formData = new FormData();
       formData.set("receipt", item.file);
       formData.set("uploadedBy", uploadedBy || session?.name || "");
-      if (session?.clientId) formData.set("clientId", session.clientId);
+      const clientId = session?.role === "client" ? session.clientId : selectedClientId;
+      if (clientId) formData.set("clientId", clientId);
 
       try {
         const response = await fetch("/api/tickets/upload", {
@@ -454,7 +591,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     const response = await fetch("/api/tickets", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...manualForm, paymentType }),
+      body: JSON.stringify({ ...manualForm, paymentType, clientId: selectedClientId }),
     });
     const data = (await response.json()) as { ticket?: GasTicketRecord; error?: string };
     setBusy(null);
@@ -464,7 +601,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
       return;
     }
 
-    setManualForm({ folio: "", total: "", iva: "" });
+    setManualForm({ folio: "", total: "", iva: "", ticketDate: new Date().toISOString().slice(0, 10) });
     setMessage({ type: "success", text: `Ticket ${data.ticket.folio} agregado a la cola.` });
     await loadTickets();
   }
@@ -491,6 +628,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
       setMessage(summarizeSubmitResults(Array.isArray(data.result) ? data.result : []));
     }
     await loadTickets();
+    await Promise.all([loadReports(), loadCommissions()]);
   }
 
   if (!session) {
@@ -517,9 +655,9 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               </button>
             ))}
           </div>
-          {loginRole !== "admin" && (
+          {loginRole === "operator" && (
             <div className="field">
-              <label htmlFor="loginName">{loginRole === "client" ? "Nombre" : "Operador"}</label>
+              <label htmlFor="loginName">Operador</label>
               <input
                 id="loginName"
                 value={loginName}
@@ -584,7 +722,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
           {(isAdmin || isOperator) && (
             <div className="sidebar-row">
               <CheckCircle2 size={16} />
-              {formatCurrency(commissionTotal)} comision
+              {formatCurrency(commissionTotal)} comision pendiente
             </div>
           )}
           {isClient && (
@@ -612,7 +750,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                 className="button warn"
                 type="button"
                 onClick={() => submit()}
-                disabled={busy === "submit-all" || pendingCount === 0}
+                disabled={busy === "submit-all" || submittableCount === 0}
               >
                 <Send size={16} />
                 Enviar cola
@@ -677,6 +815,160 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               </section>
             )}
 
+            {isAdmin && (
+              <section className="panel">
+                <div className="panel-header">
+                  <h3>Cuentas de clientes</h3>
+                  <Building2 size={18} />
+                </div>
+                <form className="panel-body stack" onSubmit={saveClientAccount}>
+                  <div className="field">
+                    <label htmlFor="accountName">Nombre o razon social</label>
+                    <input
+                      id="accountName"
+                      value={clientAccountForm.name}
+                      onChange={(event) => setClientAccountForm((form) => ({ ...form, name: event.target.value }))}
+                      required
+                    />
+                  </div>
+                  <div className="field-row">
+                    <div className="field">
+                      <label htmlFor="accountRfc">RFC</label>
+                      <input
+                        id="accountRfc"
+                        value={clientAccountForm.rfc}
+                        onChange={(event) => setClientAccountForm((form) => ({ ...form, rfc: event.target.value }))}
+                        required
+                      />
+                    </div>
+                    <div className="field">
+                      <label htmlFor="accountTaxRegime">Regimen fiscal</label>
+                      <input
+                        id="accountTaxRegime"
+                        value={clientAccountForm.taxRegime}
+                        onChange={(event) =>
+                          setClientAccountForm((form) => ({ ...form, taxRegime: event.target.value }))
+                        }
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label htmlFor="accountEmail">Email de acceso</label>
+                    <input
+                      id="accountEmail"
+                      type="email"
+                      value={clientAccountForm.email}
+                      onChange={(event) => setClientAccountForm((form) => ({ ...form, email: event.target.value }))}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="accountPassword">Password temporal</label>
+                    <input
+                      id="accountPassword"
+                      type="password"
+                      minLength={8}
+                      value={clientAccountForm.password}
+                      onChange={(event) =>
+                        setClientAccountForm((form) => ({ ...form, password: event.target.value }))
+                      }
+                      autoComplete="new-password"
+                      required
+                    />
+                  </div>
+                  <button className="button full" type="submit" disabled={busy === "client-account"}>
+                    <Building2 size={16} />
+                    Guardar cuenta
+                  </button>
+                  {clients.length > 0 && (
+                    <div className="mini-list">
+                      {clients.map((client) => (
+                        <div className="mini-row" key={client.id}>
+                          <span>{client.name}</span>
+                          <span>{client.rfc}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </form>
+              </section>
+            )}
+
+            {(isAdmin || isOperator) && (
+              <section className="panel">
+                <div className="panel-header">
+                  <h3>Comisiones</h3>
+                  <WalletCards size={18} />
+                </div>
+                <div className="panel-body stack">
+                  <div className="mini-list">
+                    {commissions.map((commission) => (
+                      <div className="commission-row" key={commission.operatorId ?? commission.operatorName}>
+                        <div>
+                          <strong>{commission.operatorName}</strong>
+                          <span>{formatCurrency(commission.pendingAmount)} pendiente</span>
+                        </div>
+                        <span className={`status-pill commission-${commission.status}`}>
+                          {commission.status === "paid" ? "Pagada" : "Pendiente"}
+                        </span>
+                      </div>
+                    ))}
+                    {commissions.length === 0 && <div className="empty-compact">Sin comisiones registradas.</div>}
+                  </div>
+                  {isAdmin && commissions.length > 0 && (
+                    <form className="stack commission-form" onSubmit={payCommission}>
+                      <div className="field">
+                        <label htmlFor="commissionOperator">Operador</label>
+                        <select
+                          id="commissionOperator"
+                          value={commissionPayment.operatorKey}
+                          onChange={(event) => {
+                            const summary = commissions.find(
+                              (item) =>
+                                (item.operatorId ?? `name:${item.operatorName}`) === event.target.value,
+                            );
+                            setCommissionPayment({
+                              operatorKey: event.target.value,
+                              amount: summary?.pendingAmount ? String(summary.pendingAmount) : "",
+                            });
+                          }}
+                        >
+                          {commissions.map((commission) => {
+                            const key = commission.operatorId ?? `name:${commission.operatorName}`;
+                            return <option key={key} value={key}>{commission.operatorName}</option>;
+                          })}
+                        </select>
+                      </div>
+                      <div className="field">
+                        <label htmlFor="commissionAmount">Monto pagado</label>
+                        <input
+                          id="commissionAmount"
+                          type="number"
+                          min="0.01"
+                          max={selectedCommission?.pendingAmount || undefined}
+                          step="0.01"
+                          value={commissionPayment.amount}
+                          onChange={(event) =>
+                            setCommissionPayment((current) => ({ ...current, amount: event.target.value }))
+                          }
+                          required
+                        />
+                      </div>
+                      <button
+                        className="button full"
+                        type="submit"
+                        disabled={busy === "commission-payment" || !selectedCommission?.pendingAmount}
+                      >
+                        <CheckCircle2 size={16} />
+                        Registrar pago
+                      </button>
+                    </form>
+                  )}
+                </div>
+              </section>
+            )}
+
             {isClient && (
               <section className="panel">
                 <div className="panel-header">
@@ -735,6 +1027,22 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                 <Upload size={18} />
               </div>
               <form className="panel-body stack" onSubmit={uploadReceipt}>
+                {!isClient && (
+                  <div className="field">
+                    <label htmlFor="uploadClient">Cuenta del cliente</label>
+                    <select
+                      id="uploadClient"
+                      value={selectedClientId}
+                      onChange={(event) => setSelectedClientId(event.target.value)}
+                      required
+                    >
+                      <option value="">Seleccionar cliente</option>
+                      {clients.map((client) => (
+                        <option value={client.id} key={client.id}>{client.name} - {client.rfc}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <label className="file-drop">
                   <span className="drop-inner">
                     <Camera size={28} />
@@ -814,7 +1122,11 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                 <button
                   className="button full"
                   type="submit"
-                  disabled={busy === "upload" || queuedUploadCount === 0 || (isClient && !session.clientId)}
+                  disabled={
+                    busy === "upload" ||
+                    queuedUploadCount === 0 ||
+                    (isClient ? !session.clientId : !selectedClientId)
+                  }
                 >
                   <Upload size={16} />
                   {queuedUploadCount > 1 ? `Subir ${queuedUploadCount} recibos` : "Subir recibo"}
@@ -829,6 +1141,32 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                   <FilePlus2 size={18} />
                 </div>
                 <form className="panel-body stack" onSubmit={createManual}>
+                  <div className="field">
+                    <label htmlFor="manualClient">Cuenta del cliente</label>
+                    <select
+                      id="manualClient"
+                      value={selectedClientId}
+                      onChange={(event) => setSelectedClientId(event.target.value)}
+                      required
+                    >
+                      <option value="">Seleccionar cliente</option>
+                      {clients.map((client) => (
+                        <option value={client.id} key={client.id}>{client.name} - {client.rfc}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label htmlFor="ticketDate">Fecha del ticket</label>
+                    <input
+                      id="ticketDate"
+                      type="date"
+                      value={manualForm.ticketDate}
+                      onChange={(event) =>
+                        setManualForm((form) => ({ ...form, ticketDate: event.target.value }))
+                      }
+                      required
+                    />
+                  </div>
                   <div className="field">
                     <label htmlFor="folio">Folio</label>
                     <input
@@ -874,7 +1212,11 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                       Credito
                     </button>
                   </div>
-                  <button className="button full" type="submit" disabled={busy === "manual"}>
+                  <button
+                    className="button full"
+                    type="submit"
+                    disabled={busy === "manual" || !selectedClientId}
+                  >
                     <FilePlus2 size={16} />
                     Agregar ticket
                   </button>
@@ -883,6 +1225,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
             )}
           </div>
 
+          <div className="stack">
           <section className="panel">
             <div className="panel-header">
               <h3>{isOperator ? "Mis tickets" : "Cola de factura"}</h3>
@@ -890,11 +1233,12 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
             </div>
             <div className="table-wrap">
               {tickets.length === 0 ? (
-                <div className="empty-state">Sin tickets todavia.</div>
+                <div className="empty-state">No hay tickets pendientes.</div>
               ) : (
                 <table>
                   <thead>
                     <tr>
+                      <th>Fecha</th>
                       <th>Folio</th>
                       {isAdmin && <th>Cliente</th>}
                       {isAdmin && <th>Operador</th>}
@@ -909,8 +1253,9 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                   <tbody>
                     {tickets.map((ticket) => (
                       <tr key={ticket.id}>
+                        <td className="num">{formatTicketDate(ticket.ticketDate)}</td>
                         <td className="num">{ticket.folio}</td>
-                        {isAdmin && <td>{ticket.clientName ?? "Gasolina"}</td>}
+                        {isAdmin && <td>{ticket.clientName ?? "Sin cliente"}</td>}
                         {isAdmin && <td>{ticket.operatorName ?? "Manual"}</td>}
                         <td className="num">{formatCurrency(ticket.importeTotal)}</td>
                         <td className="num">{ticket.iva === null ? "-" : formatCurrency(ticket.iva)}</td>
@@ -957,6 +1302,40 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               )}
             </div>
           </section>
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <h3>Tickets enviados por mes</h3>
+                <span className="panel-subtitle">Historial de facturacion exitosa</span>
+              </div>
+              <BarChart3 size={18} />
+            </div>
+            <div className="table-wrap">
+              {monthlyReport.length === 0 ? (
+                <div className="empty-state">Todavia no hay tickets enviados.</div>
+              ) : (
+                <table className="report-table">
+                  <thead>
+                    <tr>
+                      <th>Mes</th>
+                      <th>Tickets enviados</th>
+                      <th>Total facturado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlyReport.map((month) => (
+                      <tr key={month.month}>
+                        <td className="month-cell"><CalendarDays size={15} />{formatMonth(month.month)}</td>
+                        <td className="num"><strong>{month.submittedCount}</strong></td>
+                        <td className="num">{formatCurrency(month.submittedTotal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </section>
+          </div>
         </div>
       </section>
     </main>

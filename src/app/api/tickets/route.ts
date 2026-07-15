@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { assertRoleRequest } from "@/lib/auth";
 import { createManualTicket } from "@/lib/gas/workflows";
-import { listTickets } from "@/lib/gas/repository";
+import { getClientById, listTickets } from "@/lib/gas/repository";
 
 export const dynamic = "force-dynamic";
 
@@ -25,12 +25,24 @@ export async function POST(request: Request) {
       total?: unknown;
       iva?: unknown;
       paymentType?: unknown;
+      ticketDate?: unknown;
+      clientId?: unknown;
     };
+    const clientId = String(body.clientId ?? "").trim();
+    if (!clientId) {
+      return NextResponse.json({ error: "Select a client account for the ticket." }, { status: 400 });
+    }
+    const client = await getClientById(clientId);
+    if (!client || !client.active) {
+      return NextResponse.json({ error: "The selected client account is not active." }, { status: 400 });
+    }
     const ticket = await createManualTicket({
       folio: body.folio,
       total: body.total,
       iva: body.iva,
       paymentType: body.paymentType,
+      ticketDate: body.ticketDate,
+      client,
       operatorId: session.operatorId,
       operatorName: session.name,
     });

@@ -9,12 +9,14 @@ export type GasTicketStatus =
   | "failed";
 
 export type GasReceiptStatus = "ocr_pending" | "processed" | "needs_review" | "failed";
+export type CommissionStatus = "pending" | "paid";
 
 export type ExtractedTicket = {
   folio: string;
   total: number;
   iva?: number;
   paymentType: PaymentType;
+  ticketDate?: string;
 };
 
 export type GasTicketRecord = {
@@ -29,6 +31,8 @@ export type GasTicketRecord = {
   importeTotal: number;
   iva: number | null;
   operatorCommission: number;
+  commissionStatus: CommissionStatus;
+  commissionPaidAmount: number;
   rfc: string;
   cfdi: string;
   paymentType: PaymentType;
@@ -37,6 +41,7 @@ export type GasTicketRecord = {
   petromayabConsumptionId: string | null;
   petromayabClientId: string | null;
   submittedAt: string | null;
+  ticketDate: string;
   createdAt: string;
   receiptFileName?: string | null;
 };
@@ -62,6 +67,7 @@ export type GasClientRecord = {
   rfc: string;
   email: string;
   taxRegime: string;
+  active: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -72,6 +78,21 @@ export type GasOperatorRecord = {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+export type MonthlyTicketReport = {
+  month: string;
+  submittedCount: number;
+  submittedTotal: number;
+};
+
+export type CommissionSummary = {
+  operatorId: string | null;
+  operatorName: string;
+  earnedAmount: number;
+  paidAmount: number;
+  pendingAmount: number;
+  status: CommissionStatus;
 };
 
 export type EnvOperatorAccount = {

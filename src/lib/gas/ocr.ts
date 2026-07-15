@@ -28,7 +28,8 @@ const OCR_PROMPT = [
   "total: total amount as a number.",
   "iva: IVA/tax amount as a number when visible.",
   "card: Credit or Debit.",
-  'Example: [{"folio":"2770441","total":1075.60,"iva":144.38,"card":"Debit"}]',
+  "date: receipt date in YYYY-MM-DD format when visible.",
+  'Example: [{"folio":"2770441","total":1075.60,"iva":144.38,"card":"Debit","date":"2026-07-14"}]',
 ].join("\n");
 
 function sleep(ms: number): Promise<void> {
@@ -50,6 +51,7 @@ function parseJsonTickets(rawText: string): ExtractedTicket[] {
       total: record.total,
       iva: record.iva,
       paymentType: record.card ?? record.tipoPago ?? record.paymentType,
+      ticketDate: record.date ?? record.fecha ?? record.ticketDate,
     });
 
     if (!result.ok) {
@@ -80,12 +82,14 @@ export function extractAllTicketsFromText(text: string): ExtractedTicket[] {
     const paymentMatch =
       chunk.match(/[Tt]ipo\s+de\s+[Pp]ago\s*:?\s*\n?\s*([^\n]{3,60})/) ??
       chunk.match(/[Tt]arjeta\s+(Credito|Debito|Credit|Debit)/i);
+    const dateMatch = chunk.match(/(?:Fecha|Date)\s*:?\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{4}|\d{4}[\/-]\d{1,2}[\/-]\d{1,2})/i);
 
     const validation = validateTicketInput({
       folio: folioMatch.folio,
       total: totalMatch?.[1],
       iva: ivaMatch?.[1],
       paymentType: /credito|credit/i.test(paymentMatch?.[1] ?? "") ? "credit" : "debit",
+      ticketDate: dateMatch?.[1],
     });
 
     return validation.ok ? [validation.ticket] : [];

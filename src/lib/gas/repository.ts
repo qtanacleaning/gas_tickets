@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getAppEnv } from "@/lib/env";
 import type { AppSession } from "@/lib/auth";
 import type {
+  CommissionSummary,
   ExtractedTicket,
   GasClientRecord,
   GasOperatorRecord,
@@ -12,6 +13,7 @@ import type {
   GasReceiptStatus,
   GasTicketRecord,
   GasTicketStatus,
+  MonthlyTicketReport,
 } from "@/lib/gas/types";
 
 type TicketRow = {
@@ -25,6 +27,8 @@ type TicketRow = {
   importe_total: string | number;
   iva: string | number | null;
   operator_commission?: string | number | null;
+  commission_status?: "pending" | "paid";
+  commission_paid_amount?: string | number | null;
   rfc: string;
   cfdi: string;
   payment_type: "debit" | "credit";
@@ -33,6 +37,7 @@ type TicketRow = {
   petromayab_consumption_id: string | null;
   petromayab_client_id: string | null;
   submitted_at: string | null;
+  ticket_date?: string | null;
   created_at: string;
   gas_receipts?: { file_name: string | null } | { file_name: string | null }[] | null;
 };
@@ -58,6 +63,8 @@ type ClientRow = {
   rfc: string;
   email: string;
   tax_regime: string;
+  password_hash?: string | null;
+  active?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -102,6 +109,7 @@ function mapClient(row: ClientRow): GasClientRecord {
     rfc: row.rfc,
     email: row.email,
     taxRegime: row.tax_regime,
+    active: row.active ?? true,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -133,6 +141,8 @@ function mapTicket(row: TicketRow, clientName?: string | null): GasTicketRecord 
     importeTotal: Number(row.importe_total),
     iva,
     operatorCommission: storedCommission && storedCommission > 0 ? storedCommission : commissionFromIva(iva ?? undefined),
+    commissionStatus: row.commission_status ?? "pending",
+    commissionPaidAmount: Number(row.commission_paid_amount ?? 0),
     rfc: row.rfc,
     cfdi: row.cfdi,
     paymentType: row.payment_type,
@@ -141,6 +151,7 @@ function mapTicket(row: TicketRow, clientName?: string | null): GasTicketRecord 
     petromayabConsumptionId: row.petromayab_consumption_id,
     petromayabClientId: row.petromayab_client_id,
     submittedAt: row.submitted_at,
+    ticketDate: row.ticket_date ?? row.created_at.slice(0, 10),
     createdAt: row.created_at,
     receiptFileName: firstReceiptName(row),
   };
@@ -157,6 +168,20 @@ function operatorNameKey(name: string): string {
 function hashOperatorPin(pin: string): string {
   const { sessionSecret } = getAppEnv();
   return crypto.createHmac("sha256", sessionSecret).update(pin.trim()).digest("base64url");
+}
+
+function hashClientPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString("base64url");
+  const hash = crypto.scryptSync(password, salt, 32).toString("base64url");
+  return `scrypt$${salt}$${hash}`;
+}
+
+function verifyClientPasswordHash(password: string, storedHash: string): boolean {
+  const [algorithm, salt, encodedHash] = storedHash.split("$");
+  if (algorithm !== "scrypt" || !salt || !encodedHash) return false;
+  const expected = Buffer.from(encodedHash, "base64url");
+  const received = crypto.scryptSync(password, salt, expected.length);
+  return expected.length === received.length && crypto.timingSafeEqual(expected, received);
 }
 
 function missingSchemaColumn(error: { message?: string } | null, tableName: string): string | null {
@@ -275,7 +300,10 @@ export async function createTicket(input: {
   status?: GasTicketStatus;
 }): Promise<GasTicketRecord> {
   const env = getAppEnv();
-  const rfc = input.client?.rfc ?? env.petromayabRfc;
+  if (!input.client?.id || !input.client.rfc) {
+    throw new Error("A client account is required before a ticket can be created.");
+  }
+  const rfc = input.client.rfc;
   const cfdi = "Gastos en General";
   const supabase = createAdminClient();
   const payload: Record<string, unknown> = {
@@ -288,6 +316,7 @@ export async function createTicket(input: {
     importe_total: input.ticket.total,
     iva: input.ticket.iva ?? null,
     operator_commission: commissionFromIva(input.ticket.iva),
+    ticket_date: input.ticket.ticketDate ?? new Date().toISOString().slice(0, 10),
     rfc,
     cfdi,
     payment_type: input.ticket.paymentType,
@@ -341,6 +370,7 @@ export async function listTickets(limit = 50, session?: AppSession): Promise<Gas
     supabase
       .from("gas_tickets")
       .select("*, gas_receipts(file_name)")
+      .not("status", "in", "(submitted,already_invoiced)")
       .order("created_at", { ascending: false })
       .limit(limit);
 
@@ -440,6 +470,73 @@ export async function upsertClient(input: {
   return mapClient(data as ClientRow);
 }
 
+export async function listClients(): Promise<GasClientRecord[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.from("gas_clients").select("*").order("name", { ascending: true });
+  if (error) throw new Error(`Client lookup failed: ${error.message}`);
+  return ((data ?? []) as ClientRow[]).map(mapClient);
+}
+
+export async function createClientAccount(input: {
+  name: string;
+  rfc: string;
+  email: string;
+  taxRegime: string;
+  password: string;
+}): Promise<GasClientRecord> {
+  const name = input.name.trim();
+  const rfc = input.rfc.trim().toUpperCase();
+  const email = input.email.trim().toLowerCase();
+  const taxRegime = input.taxRegime.trim();
+  const password = input.password;
+
+  if (!name || !rfc || !email || !taxRegime) throw new Error("Name, RFC, email, and tax regime are required.");
+  if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error("A valid client email is required.");
+  if (password.length < 8) throw new Error("Client password must be at least 8 characters.");
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("gas_clients")
+    .upsert(
+      {
+        name,
+        rfc,
+        email,
+        tax_regime: taxRegime,
+        password_hash: hashClientPassword(password),
+        active: true,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "email" },
+    )
+    .select("*")
+    .single();
+
+  if (error) throw new Error(`Client account save failed: ${error.message}`);
+  return mapClient(data as ClientRow);
+}
+
+export async function verifyClientPassword(input: {
+  email: string;
+  password: string;
+}): Promise<GasClientRecord | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("gas_clients")
+    .select("*")
+    .eq("email", input.email.trim().toLowerCase())
+    .eq("active", true)
+    .maybeSingle();
+
+  if (error) throw new Error(`Client lookup failed: ${error.message}`);
+  if (!data) return null;
+
+  const row = data as ClientRow;
+  if (!row.password_hash) return null;
+  if (!verifyClientPasswordHash(input.password, row.password_hash)) return null;
+  return mapClient(row);
+}
+
 export async function listOperators(): Promise<GasOperatorRecord[]> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
@@ -500,6 +597,130 @@ export async function verifyOperatorPin(input: {
   }
 
   return mapOperator(row);
+}
+
+type SubmittedSummaryRow = {
+  submitted_at: string | null;
+  ticket_date: string | null;
+  importe_total: string | number;
+  operator_id: string | null;
+  operator_name: string | null;
+  operator_commission: string | number | null;
+  commission_paid_amount: string | number | null;
+};
+
+async function listSubmittedSummaryRows(session?: AppSession): Promise<SubmittedSummaryRow[]> {
+  const supabase = createAdminClient();
+  const rows: SubmittedSummaryRow[] = [];
+  const pageSize = 1000;
+
+  for (let offset = 0; ; offset += pageSize) {
+    let query = supabase
+      .from("gas_tickets")
+      .select(
+        "submitted_at,ticket_date,importe_total,operator_id,operator_name,operator_commission,commission_paid_amount",
+      )
+      .in("status", ["submitted", "already_invoiced"])
+      .order("submitted_at", { ascending: false })
+      .range(offset, offset + pageSize - 1);
+
+    if (session?.role === "operator") {
+      query = session.operatorId
+        ? query.eq("operator_id", session.operatorId)
+        : query.eq("operator_name", session.name ?? "");
+    }
+
+    if (session?.role === "client") {
+      query = query.eq("client_id", session.clientId ?? "00000000-0000-0000-0000-000000000000");
+    }
+
+    const { data, error } = await query;
+    if (error) throw new Error(`Submitted ticket report failed: ${error.message}`);
+    const page = (data ?? []) as SubmittedSummaryRow[];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+
+  return rows;
+}
+
+export async function getMonthlyTicketReport(session?: AppSession): Promise<MonthlyTicketReport[]> {
+  const rows = await listSubmittedSummaryRows(session);
+  const months = new Map<string, MonthlyTicketReport>();
+
+  for (const row of rows) {
+    const month = (row.submitted_at ?? row.ticket_date ?? "").slice(0, 7);
+    if (!month) continue;
+    const current = months.get(month) ?? { month, submittedCount: 0, submittedTotal: 0 };
+    current.submittedCount += 1;
+    current.submittedTotal = Math.round((current.submittedTotal + Number(row.importe_total)) * 100) / 100;
+    months.set(month, current);
+  }
+
+  return [...months.values()].sort((a, b) => b.month.localeCompare(a.month));
+}
+
+export async function getCommissionSummaries(session?: AppSession): Promise<CommissionSummary[]> {
+  const rows = await listSubmittedSummaryRows(session);
+  const summaries = new Map<string, CommissionSummary>();
+
+  for (const row of rows) {
+    const operatorName = row.operator_name?.trim() || "Sin operador";
+    const key = row.operator_id ?? operatorName.toLowerCase();
+    const current = summaries.get(key) ?? {
+      operatorId: row.operator_id,
+      operatorName,
+      earnedAmount: 0,
+      paidAmount: 0,
+      pendingAmount: 0,
+      status: "paid" as const,
+    };
+    current.earnedAmount += Number(row.operator_commission ?? 0);
+    current.paidAmount += Number(row.commission_paid_amount ?? 0);
+    summaries.set(key, current);
+  }
+
+  for (const summary of summaries.values()) {
+    summary.earnedAmount = Math.round(summary.earnedAmount * 100) / 100;
+    summary.paidAmount = Math.round(summary.paidAmount * 100) / 100;
+    summary.pendingAmount = Math.max(0, Math.round((summary.earnedAmount - summary.paidAmount) * 100) / 100);
+    summary.status = summary.pendingAmount > 0 ? "pending" : "paid";
+  }
+
+  if (session?.role === "operator" && summaries.size === 0 && session.name) {
+    return [{
+      operatorId: session.operatorId ?? null,
+      operatorName: session.name,
+      earnedAmount: 0,
+      paidAmount: 0,
+      pendingAmount: 0,
+      status: "paid",
+    }];
+  }
+
+  return [...summaries.values()].sort((a, b) => a.operatorName.localeCompare(b.operatorName));
+}
+
+export async function recordCommissionPayment(input: {
+  operatorId?: string | null;
+  operatorName: string;
+  amount: number;
+  createdBy?: string | null;
+}): Promise<string> {
+  const amount = Math.round(Number(input.amount) * 100) / 100;
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("Payment amount must be greater than zero.");
+  if (!input.operatorName.trim()) throw new Error("Operator is required.");
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.rpc("record_gas_commission_payment", {
+    p_operator_id: input.operatorId ?? null,
+    p_operator_name: input.operatorName.trim(),
+    p_amount: amount,
+    p_created_by: input.createdBy ?? null,
+  });
+
+  if (error) throw new Error(`Commission payment failed: ${error.message}`);
+  return String(data);
 }
 
 export async function updateTicket(

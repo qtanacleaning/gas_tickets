@@ -203,6 +203,12 @@ button:disabled {
   gap: 6px;
 }
 
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 .field label {
   color: var(--color-text);
   font-size: 13px;
@@ -526,7 +532,8 @@ td {
 }
 
 .status-pill.submitted,
-.status-pill.already_invoiced {
+.status-pill.already_invoiced,
+.status-pill.commission-paid {
   background: var(--color-success-bg);
   color: var(--color-success);
 }
@@ -536,6 +543,60 @@ td {
 .status-pill.error {
   background: var(--color-error-bg);
   color: var(--color-error);
+}
+
+.status-pill.commission-pending {
+  background: var(--color-warn-bg);
+  color: var(--color-warn);
+}
+
+.panel-subtitle {
+  display: block;
+  margin-top: 4px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.commission-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--color-surface-alt);
+}
+
+.commission-row > div {
+  display: grid;
+  gap: 2px;
+}
+
+.commission-row strong {
+  font-size: 13px;
+}
+
+.commission-row div span,
+.empty-compact {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.commission-form {
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.report-table {
+  min-width: 520px;
+}
+
+.month-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-transform: capitalize;
 }
 
 .action-button {
@@ -672,6 +733,10 @@ td {
   }
 
   .sidebar-list {
+    grid-template-columns: 1fr;
+  }
+
+  .field-row {
     grid-template-columns: 1fr;
   }
 

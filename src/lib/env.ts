@@ -12,7 +12,6 @@ export type AppEnv = {
   receiptBucket: string;
   petromayabBaseUrl: string;
   petromayabReferencia: string;
-  petromayabRfc: string;
   petromayabVoucherUseId: string;
   petromayabPaymentWayDebit: string;
   petromayabPaymentWayCredit: string;
@@ -69,7 +68,6 @@ export function getAppEnv(): AppEnv {
     receiptBucket: readEnv("SUPABASE_RECEIPT_BUCKET") ?? "gas-receipts",
     petromayabBaseUrl: readEnv("PETROMAYAB_BASE_URL") ?? "https://facturacion.petromayab.net",
     petromayabReferencia: requireEnv("PETROMAYAB_REFERENCIA"),
-    petromayabRfc: requireEnv("PETROMAYAB_RFC"),
     petromayabVoucherUseId: readEnv("PETROMAYAB_VOUCHER_USE_ID") ?? "3",
     petromayabPaymentWayDebit: readEnv("PETROMAYAB_PAYMENT_WAY_DEBIT") ?? "18",
     petromayabPaymentWayCredit: readEnv("PETROMAYAB_PAYMENT_WAY_CREDIT") ?? "4",

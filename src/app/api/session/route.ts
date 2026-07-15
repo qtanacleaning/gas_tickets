@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAppSession, getSessionCookieNames, getSessionCookieOptions, getRequestSession } from "@/lib/auth";
 import { getAppEnv, getEnvClientAccounts, getEnvOperatorAccounts } from "@/lib/env";
-import { getClientByEmail, upsertClient, verifyOperatorPin } from "@/lib/gas/repository";
+import { getClientByEmail, upsertClient, verifyClientPassword, verifyOperatorPin } from "@/lib/gas/repository";
 import type { UserRole } from "@/lib/gas/types";
 
 export const dynamic = "force-dynamic";
@@ -35,12 +35,16 @@ export async function POST(request: Request) {
       role === "client" && clientEmail
         ? getEnvClientAccounts().find((account) => account.email.trim().toLowerCase() === clientEmail)
         : null;
+    const databaseClient =
+      role === "client" && clientEmail
+        ? await verifyClientPassword({ email: clientEmail, password: body.password ?? "" })
+        : null;
 
     if (role === "client") {
       const hasIndividualClients = getEnvClientAccounts().length > 0;
       const validIndividualClient = envClient?.password === body.password;
       const validSharedClientPassword = !hasIndividualClients && clientPassword && body.password === clientPassword;
-      if (!validIndividualClient && !validSharedClientPassword) {
+      if (!databaseClient && !validIndividualClient && !validSharedClientPassword) {
         return NextResponse.json({ error: "Invalid password." }, { status: 401 });
       }
     }
@@ -62,7 +66,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const client = envClient
+    const client = databaseClient ?? (envClient
       ? await upsertClient({
           name: envClient.name,
           rfc: envClient.rfc,
@@ -71,7 +75,7 @@ export async function POST(request: Request) {
         })
       : role === "client" && clientEmail
         ? await getClientByEmail(clientEmail)
-        : null;
+        : null);
     const session = {
       role,
       name:

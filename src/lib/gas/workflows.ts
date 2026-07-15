@@ -39,6 +39,7 @@ export async function createManualTicket(input: {
   total: unknown;
   iva?: unknown;
   paymentType: unknown;
+  ticketDate?: unknown;
   client?: GasClientRecord | null;
   operatorId?: string | null;
   operatorName?: string | null;
@@ -65,6 +66,10 @@ export async function ingestReceiptUpload(input: {
   operatorName?: string | null;
   clientId?: string | null;
 }): Promise<{ receiptId: string; ticketsCreated: number; skippedReason?: string }> {
+  if (!input.clientId) throw new Error("Select a client account before uploading receipts.");
+  const client = await getClientById(input.clientId);
+  if (!client || !client.active) throw new Error("The selected client account is not active.");
+
   const storagePath = receiptStoragePath(input.file.name);
   await uploadReceiptFile(input.file, storagePath);
 

@@ -31,6 +31,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Complete your client profile before uploading receipts." }, { status: 400 });
     }
 
+    const effectiveClientId = session.role === "client" ? session.clientId : clientId || undefined;
+    if (!effectiveClientId) {
+      return NextResponse.json({ error: "Select a client account before uploading receipts." }, { status: 400 });
+    }
+
     const operatorName =
       session.role === "operator" ? session.name : uploadedBy || session.name || (session.role === "admin" ? "Admin" : null);
 
@@ -39,7 +44,7 @@ export async function POST(request: Request) {
       uploadedBy: uploadedBy || session.name || undefined,
       operatorId: session.role === "operator" ? session.operatorId : undefined,
       operatorName,
-      clientId: session.role === "client" ? session.clientId : clientId || undefined,
+      clientId: effectiveClientId,
     });
 
     return NextResponse.json(result, { status: 201 });
