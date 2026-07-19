@@ -15,8 +15,13 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="es-MX" data-theme="dark" suppressHydrationWarning>
-      <body className={sora.variable}>{children}</body>
+    <html
+      lang="es-MX"
+      className={sora.variable}
+      data-theme="dark"
+      suppressHydrationWarning
+    >
+      <body>{children}</body>
     </html>
   );
 }

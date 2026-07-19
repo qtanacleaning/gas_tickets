@@ -22,7 +22,7 @@
   --shadow-soft: 0 18px 52px rgba(0, 0, 0, 0.24);
   --radius-card: 18px;
   --radius-button: 12px;
-  --font-sans: var(--font-sora), Sora, ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-sora, "Sora"), ui-sans-serif, system-ui, sans-serif;
 }
 
 :root[data-theme="light"] {
@@ -75,7 +75,9 @@ body {
 button,
 input,
 select {
-  font: inherit;
+  font-family: var(--font-sans);
+  font-size: inherit;
+  line-height: inherit;
 }
 
 button {
