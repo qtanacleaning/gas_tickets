@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { assertRoleRequest } from "@/lib/auth";
 import { createManualTicket } from "@/lib/gas/workflows";
-import { getClientById, listTickets } from "@/lib/gas/repository";
+import { assignTicketToClient, getClientById, listTickets } from "@/lib/gas/repository";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +50,25 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Could not create ticket." },
+      { status: error instanceof Error && error.message === "Unauthorized" ? 401 : 400 },
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const session = assertRoleRequest(request, ["admin"]);
+    const body = (await request.json()) as { ticketId?: unknown; clientId?: unknown };
+    const ticketId = String(body.ticketId ?? "").trim();
+    const clientId = String(body.clientId ?? "").trim();
+    if (!ticketId || !clientId) {
+      return NextResponse.json({ error: "Ticket and client are required." }, { status: 400 });
+    }
+    const ticket = await assignTicketToClient({ ticketId, clientId, assignedBy: session.name });
+    return NextResponse.json({ ticket });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Could not assign ticket." },
       { status: error instanceof Error && error.message === "Unauthorized" ? 401 : 400 },
     );
   }

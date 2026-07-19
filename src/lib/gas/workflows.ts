@@ -4,6 +4,7 @@ import {
   addAttempt,
   createReceipt,
   createTicket,
+  createNotification,
   downloadReceiptFile,
   getClientById,
   getPendingTickets,
@@ -66,9 +67,10 @@ export async function ingestReceiptUpload(input: {
   operatorName?: string | null;
   clientId?: string | null;
 }): Promise<{ receiptId: string; ticketsCreated: number; skippedReason?: string }> {
-  if (!input.clientId) throw new Error("Select a client account before uploading receipts.");
-  const client = await getClientById(input.clientId);
-  if (!client || !client.active) throw new Error("The selected client account is not active.");
+  if (input.clientId) {
+    const client = await getClientById(input.clientId);
+    if (!client || !client.active) throw new Error("The selected client account is not active.");
+  }
 
   const storagePath = receiptStoragePath(input.file.name);
   await uploadReceiptFile(input.file, storagePath);
@@ -113,6 +115,16 @@ export async function processReceiptOcr(
         ok: false,
         errorMessage: ocr.skippedReason,
       });
+      await createNotification({
+        recipientRole: "operator",
+        recipientId: receipt.operatorId,
+        recipientName: receipt.operatorName,
+        type: "ocr_resubmit",
+        title: "Ticket no reconocido",
+        message: "No pudimos leer el recibo. Toma una foto nueva y vuelve a enviarlo.",
+        resourceType: "receipt",
+        resourceId: receipt.id,
+      }).catch(() => undefined);
       return { ticketsCreated: 0, skippedReason: ocr.skippedReason };
     }
 
@@ -143,6 +155,18 @@ export async function processReceiptOcr(
       responsePayload: { provider: ocr.provider, tickets: ocr.tickets.length, rawText: ocr.rawText },
       errorMessage: created > 0 ? null : "No tickets were extracted.",
     });
+    await createNotification({
+      recipientRole: "operator",
+      recipientId: receipt.operatorId,
+      recipientName: receipt.operatorName,
+      type: created > 0 ? "ocr_success" : "ocr_resubmit",
+      title: created > 0 ? "Tickets reconocidos" : "Ticket no reconocido",
+      message: created > 0
+        ? `${created} ticket${created === 1 ? "" : "s"} agregado${created === 1 ? "" : "s"} al pool.`
+        : "No pudimos leer el recibo. Toma una foto nueva.",
+      resourceType: "receipt",
+      resourceId: receipt.id,
+    }).catch(() => undefined);
 
     return { ticketsCreated: created };
   } catch (error) {
@@ -158,6 +182,16 @@ export async function processReceiptOcr(
       ok: false,
       errorMessage: message,
     });
+    await createNotification({
+      recipientRole: "operator",
+      recipientId: receipt.operatorId,
+      recipientName: receipt.operatorName,
+      type: "ocr_resubmit",
+      title: "Error al reconocer el ticket",
+      message: "El recibo necesita una foto nueva para poder procesarse.",
+      resourceType: "receipt",
+      resourceId: receipt.id,
+    }).catch(() => undefined);
     throw error;
   }
 }
@@ -184,6 +218,18 @@ export async function processPendingReceiptOcr(limit = 10) {
 export async function submitTicket(ticketId: string): Promise<{ status: string }> {
   const ticket = await getTicketById(ticketId);
   if (!ticket) throw new Error("Ticket not found.");
+  if (!ticket.clientId || !ticket.rfc) throw new Error("Assign this ticket to a client before submission.");
+  const client = await getClientById(ticket.clientId);
+  if (
+    !client ||
+    !client.name ||
+    !client.rfc ||
+    !client.taxRegime ||
+    !client.fiscalAddressLine1 ||
+    !client.fiscalPostalCode
+  ) {
+    throw new Error("The client must complete their fiscal profile before factura submission.");
+  }
 
   try {
     const result = await submitTicketToPetromayab(ticket);
@@ -200,6 +246,27 @@ export async function submitTicket(ticketId: string): Promise<{ status: string }
       ok: true,
       responsePayload: result.invoice.response,
     });
+    await Promise.all([
+      createNotification({
+        recipientRole: "operator",
+        recipientId: ticket.operatorId,
+        recipientName: ticket.operatorName,
+        type: "ticket_submitted",
+        title: "Ticket facturado",
+        message: `El ticket ${ticket.folio} genero ${Math.round(ticket.operatorCommission * 100) / 100} MXN de compensacion.`,
+        resourceType: "ticket",
+        resourceId: ticket.id,
+      }).catch(() => undefined),
+      createNotification({
+        recipientRole: "client",
+        recipientId: ticket.clientId,
+        type: "ticket_submitted",
+        title: "Factura creada",
+        message: `El ticket ${ticket.folio} fue facturado correctamente.`,
+        resourceType: "ticket",
+        resourceId: ticket.id,
+      }).catch(() => undefined),
+    ]);
     return { status: "submitted" };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown submission error.";

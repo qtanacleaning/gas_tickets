@@ -22,10 +22,14 @@ This project includes:
 ## Roles
 
 - Admin: manages operator and client accounts, manual tickets, the submission queue, monthly reports, and commission payments.
-- Operator: logs in with a name/PIN, selects the client account for each upload, and sees earned, paid, and pending commission. Commission is calculated as 10% of the ticket IVA.
-- Client: logs in with the email/password created by an admin and maintains the name, RFC, email, and tax regime used for ticket submission.
+- Operator: logs in with a name/PIN, uploads receipts into the unassigned ticket pool, receives immediate OCR/resubmission feedback, and sees compensation. Compensation is 10% of IVA on successfully invoiced tickets.
+- Client: logs in with the email/password created by an admin, maintains the fiscal profile used for facturacion, and sees monthly IVA and commission. Client commission is 30% of IVA on successfully invoiced tickets.
 
 ## Environment Accounts
+
+Set `ADMIN_PASSWORD` for the administrator login. Existing installations that
+still use the former `OPERATOR_PASSWORD` variable remain supported as a
+temporary compatibility fallback.
 
 Operators can be configured with either:
 
@@ -56,11 +60,13 @@ CLIENT_1_RFC=XAXX010101000
 CLIENT_1_TAX_REGIME=601
 ```
 
-Every new receipt or manual ticket must be assigned to a client. The app submits the selected client's RFC instead of using a hardcoded RFC.
+Operator receipts enter an unassigned pool. Admin assigns recognized tickets to clients before factura submission, and the app then submits the assigned client's RFC instead of a hardcoded RFC.
+
+Operator withdrawals and client commission payments are manual for now. Admin selects specific successfully invoiced tickets, records the calculated movement, and locks those ticket amounts against duplicate settlement.
 
 ## Database updates
 
-Run all migrations in `supabase/migrations/` in filename order. The July 2026 migration adds ticket dates, database-backed client credentials, monthly reporting fields, and the commission payment ledger. Deploying the application code before that migration will leave the new account and commission endpoints unavailable.
+Run all migrations in `supabase/migrations/` in filename order. The July 2026 migrations add ticket dates, database-backed client credentials, fiscal profiles, notifications, monthly reporting, and ticket-locked settlement ledgers. Deploying the application code before both migrations will leave the new role workflows unavailable.
 
 ## Local Development
 
@@ -77,7 +83,7 @@ Open `http://localhost:3000`.
 - `DELETE /api/session` - logout
 - `GET /api/operators` - admin-only operator list
 - `POST /api/operators` - admin-only operator create/update with PIN
-- `GET /api/clients` - admin/operator client account list
+- `GET /api/clients` - admin-only client account list
 - `POST /api/clients` - admin-only client account create/update
 - `GET /api/client-profile` - load the current client's fiscal profile
 - `POST /api/client-profile` - save the current client's fiscal profile
@@ -86,6 +92,9 @@ Open `http://localhost:3000`.
 - `POST /api/tickets/upload` - upload a receipt image
 - `POST /api/tickets/submit` - admin-only submit for one ticket or a small pending batch
 - `GET /api/reports/monthly` - role-scoped monthly submitted-ticket report
+- `GET /api/dashboard` - operator/client role dashboard metrics
+- `GET /api/notifications` - role-scoped notification feed
+- `GET/POST /api/settlements` - admin ticket selection and manual withdrawal/payment recording
 - `GET /api/commissions` - admin/operator commission balances
 - `POST /api/commissions` - admin-only commission payment entry
 - `GET /api/cron/ocr` - process queued receipt OCR

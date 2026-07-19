@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   try {
-    assertRoleRequest(request, ["admin", "operator"]);
+    assertRoleRequest(request, ["admin"]);
     return NextResponse.json({ clients: (await listClients()).filter((client) => client.active) });
   } catch (error) {
     return NextResponse.json(

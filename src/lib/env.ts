@@ -59,7 +59,7 @@ export function requireEnv(name: string): string {
 
 export function getAppEnv(): AppEnv {
   return {
-    adminPassword: requireEnv("ADMIN_PASSWORD"),
+    adminPassword: readEnv("ADMIN_PASSWORD") ?? requireEnv("OPERATOR_PASSWORD"),
     clientPassword: readEnv("CLIENT_PASSWORD"),
     sessionSecret: requireEnv("SESSION_SECRET"),
     cronSecret: requireEnv("CRON_SECRET"),

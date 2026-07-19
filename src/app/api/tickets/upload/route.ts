@@ -9,7 +9,7 @@ const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 export async function POST(request: Request) {
   try {
-    const session = assertRoleRequest(request, ["admin", "operator", "client"]);
+    const session = assertRoleRequest(request, ["admin", "operator"]);
     const formData = await request.formData();
     const file = formData.get("receipt");
     const uploadedBy = String(formData.get("uploadedBy") ?? "").trim();
@@ -27,14 +27,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Receipt must be smaller than 10 MB." }, { status: 400 });
     }
 
-    if (session.role === "client" && !session.clientId) {
-      return NextResponse.json({ error: "Complete your client profile before uploading receipts." }, { status: 400 });
-    }
-
-    const effectiveClientId = session.role === "client" ? session.clientId : clientId || undefined;
-    if (!effectiveClientId) {
-      return NextResponse.json({ error: "Select a client account before uploading receipts." }, { status: 400 });
-    }
+    const effectiveClientId = session.role === "admin" ? clientId || undefined : undefined;
 
     const operatorName =
       session.role === "operator" ? session.name : uploadedBy || session.name || (session.role === "admin" ? "Admin" : null);

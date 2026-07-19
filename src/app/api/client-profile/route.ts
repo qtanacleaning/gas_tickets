@@ -34,6 +34,14 @@ export async function POST(request: Request) {
       rfc?: unknown;
       email?: unknown;
       taxRegime?: unknown;
+      fiscalAddressLine1?: unknown;
+      fiscalAddressLine2?: unknown;
+      fiscalCity?: unknown;
+      fiscalState?: unknown;
+      fiscalPostalCode?: unknown;
+      fiscalCountry?: unknown;
+      phone?: unknown;
+      cfdiUse?: unknown;
     };
     const email = session.clientEmail || normalizeEmail(body.email);
     const name = String(body.name ?? "").trim();
@@ -44,7 +52,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Name, RFC, email, and tax regime are required." }, { status: 400 });
     }
 
-    const client = await upsertClient({ name, rfc, email, taxRegime });
+    const client = await upsertClient({
+      name,
+      rfc,
+      email,
+      taxRegime,
+      fiscalAddressLine1: String(body.fiscalAddressLine1 ?? ""),
+      fiscalAddressLine2: String(body.fiscalAddressLine2 ?? ""),
+      fiscalCity: String(body.fiscalCity ?? ""),
+      fiscalState: String(body.fiscalState ?? ""),
+      fiscalPostalCode: String(body.fiscalPostalCode ?? ""),
+      fiscalCountry: String(body.fiscalCountry ?? "MX"),
+      phone: String(body.phone ?? ""),
+      cfdiUse: String(body.cfdiUse ?? "G03"),
+    });
     const nextSession = {
       ...session,
       name: client.name,

@@ -37,6 +37,14 @@ export function roundCurrency(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+export function operatorCompensationFromIva(iva: number | null | undefined): number {
+  return roundCurrency((iva ?? 0) * 0.10);
+}
+
+export function clientCommissionFromIva(iva: number | null | undefined): number {
+  return roundCurrency((iva ?? 0) * 0.30);
+}
+
 export function normalizeTicketDate(value: unknown): string | null {
   const raw = String(value ?? "").trim();
   if (!raw) return null;

@@ -33,6 +33,9 @@ export type GasTicketRecord = {
   operatorCommission: number;
   commissionStatus: CommissionStatus;
   commissionPaidAmount: number;
+  clientCommission: number;
+  clientCommissionStatus: CommissionStatus;
+  clientCommissionPaidAmount: number;
   rfc: string;
   cfdi: string;
   paymentType: PaymentType;
@@ -67,6 +70,14 @@ export type GasClientRecord = {
   rfc: string;
   email: string;
   taxRegime: string;
+  fiscalAddressLine1: string;
+  fiscalAddressLine2: string;
+  fiscalCity: string;
+  fiscalState: string;
+  fiscalPostalCode: string;
+  fiscalCountry: string;
+  phone: string;
+  cfdiUse: string;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -84,6 +95,9 @@ export type MonthlyTicketReport = {
   month: string;
   submittedCount: number;
   submittedTotal: number;
+  ivaTotal: number;
+  clientCommission: number;
+  clientCommissionPaid: number;
 };
 
 export type CommissionSummary = {
@@ -93,6 +107,37 @@ export type CommissionSummary = {
   paidAmount: number;
   pendingAmount: number;
   status: CommissionStatus;
+};
+
+export type RoleDashboard = {
+  submittedThisMonth: number;
+  ivaThisMonth: number;
+  compensationWeek: number;
+  compensationMonth: number;
+  pendingPayments: number;
+  clientCommissionMonth: number;
+  clientCommissionPaidMonth: number;
+};
+
+export type SettlementKind = "operator_withdrawal" | "client_payment";
+
+export type SettlementCandidate = {
+  ticketId: string;
+  entityId: string | null;
+  entityName: string;
+  folio: string;
+  ticketDate: string;
+  iva: number;
+  amount: number;
+};
+
+export type GasNotificationRecord = {
+  id: string;
+  type: string;
+  title: string;
+  message: string;
+  readAt: string | null;
+  createdAt: string;
 };
 
 export type EnvOperatorAccount = {

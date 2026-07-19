@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   BarChart3,
+  Bell,
   Building2,
   CalendarDays,
   Camera,
@@ -14,8 +15,11 @@ import {
   KeyRound,
   LockKeyhole,
   LogOut,
+  MessageCircle,
+  Moon,
   RefreshCw,
   Send,
+  Sun,
   Trash2,
   Upload,
   UserRound,
@@ -26,11 +30,15 @@ import type { AppSession } from "@/lib/auth";
 import type {
   CommissionSummary,
   GasClientRecord,
+  GasNotificationRecord,
   GasOperatorRecord,
   GasTicketRecord,
   GasTicketStatus,
   MonthlyTicketReport,
   PaymentType,
+  RoleDashboard,
+  SettlementCandidate,
+  SettlementKind,
   UserRole,
 } from "@/lib/gas/types";
 import { formatCurrency } from "@/lib/gas/validation";
@@ -46,6 +54,7 @@ type Message = {
 };
 
 type UploadQueueStatus = "queued" | "uploading" | "done" | "error";
+type Theme = "dark" | "light";
 
 type UploadQueueItem = {
   id: string;
@@ -95,6 +104,9 @@ function normalizeTicket(ticket: GasTicketRecord): GasTicketRecord {
     operatorCommission: Number(ticket.operatorCommission ?? 0),
     commissionStatus: ticket.commissionStatus ?? "pending",
     commissionPaidAmount: Number(ticket.commissionPaidAmount ?? 0),
+    clientCommission: Number(ticket.clientCommission ?? 0),
+    clientCommissionStatus: ticket.clientCommissionStatus ?? "pending",
+    clientCommissionPaidAmount: Number(ticket.clientCommissionPaidAmount ?? 0),
     ticketDate: ticket.ticketDate ?? ticket.createdAt.slice(0, 10),
   };
 }
@@ -109,6 +121,16 @@ function formatMonth(value: string): string {
   const [year, month] = value.split("-").map(Number);
   return new Intl.DateTimeFormat("es-MX", { month: "long", year: "numeric" }).format(
     new Date(year, month - 1, 1),
+  );
+}
+
+function clientProfileReady(client: GasClientRecord): boolean {
+  return Boolean(
+    client.name &&
+      client.rfc &&
+      client.taxRegime &&
+      client.fiscalAddressLine1 &&
+      client.fiscalPostalCode,
   );
 }
 
@@ -156,6 +178,7 @@ function summarizeSubmitResults(results: SubmitResult[]): Message {
 }
 
 export function OperatorPortal({ initialSession, initialTickets }: OperatorPortalProps) {
+  const [theme, setTheme] = useState<Theme>("dark");
   const [session, setSession] = useState<AppSession | null>(initialSession);
   const [loginRole, setLoginRole] = useState<UserRole>("operator");
   const [password, setPassword] = useState("");
@@ -184,13 +207,28 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     taxRegime: "",
     password: "",
   });
-  const [commissionPayment, setCommissionPayment] = useState({ operatorKey: "", amount: "" });
   const [clientForm, setClientForm] = useState({
     name: initialSession?.name ?? "",
     rfc: "",
     email: initialSession?.clientEmail ?? "",
     taxRegime: "",
+    fiscalAddressLine1: "",
+    fiscalAddressLine2: "",
+    fiscalCity: "",
+    fiscalState: "",
+    fiscalPostalCode: "",
+    fiscalCountry: "MX",
+    phone: "",
+    cfdiUse: "G03",
   });
+  const [dashboard, setDashboard] = useState<RoleDashboard | null>(null);
+  const [notifications, setNotifications] = useState<GasNotificationRecord[]>([]);
+  const [compensationPeriod, setCompensationPeriod] = useState<"week" | "month">("week");
+  const [ticketAssignments, setTicketAssignments] = useState<Record<string, string>>({});
+  const [settlementKind, setSettlementKind] = useState<SettlementKind>("operator_withdrawal");
+  const [settlementCandidates, setSettlementCandidates] = useState<SettlementCandidate[]>([]);
+  const [settlementEntity, setSettlementEntity] = useState("");
+  const [selectedSettlementTickets, setSelectedSettlementTickets] = useState<string[]>([]);
   const [message, setMessage] = useState<Message | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const uploadQueueRef = useRef<UploadQueueItem[]>([]);
@@ -201,7 +239,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
 
   const pendingCount = tickets.length;
   const submittableCount = useMemo(
-    () => tickets.filter((ticket) => ticket.status === "submit_pending").length,
+    () => tickets.filter((ticket) => ticket.status === "submit_pending" && ticket.clientId).length,
     [tickets],
   );
   const commissionTotal = useMemo(() => commissions.reduce((sum, item) => sum + item.pendingAmount, 0), [commissions]);
@@ -209,13 +247,49 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     () => uploadQueue.filter((item) => item.status === "queued" || item.status === "error").length,
     [uploadQueue],
   );
-  const selectedCommission = useMemo(
+  const settlementEntities = useMemo(() => {
+    const entities = new Map<string, string>();
+    for (const candidate of settlementCandidates) {
+      const key = candidate.entityId ?? `name:${candidate.entityName}`;
+      entities.set(key, candidate.entityName);
+    }
+    return [...entities.entries()];
+  }, [settlementCandidates]);
+  const visibleSettlementCandidates = useMemo(
     () =>
-      commissions.find(
-        (item) => (item.operatorId ?? `name:${item.operatorName}`) === commissionPayment.operatorKey,
-      ) ?? null,
-    [commissionPayment.operatorKey, commissions],
+      settlementCandidates.filter(
+        (candidate) => (candidate.entityId ?? `name:${candidate.entityName}`) === settlementEntity,
+      ),
+    [settlementCandidates, settlementEntity],
   );
+  const selectedSettlementAmount = useMemo(
+    () =>
+      visibleSettlementCandidates
+        .filter((candidate) => selectedSettlementTickets.includes(candidate.ticketId))
+        .reduce((sum, candidate) => sum + candidate.amount, 0),
+    [selectedSettlementTickets, visibleSettlementCandidates],
+  );
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem("gasolina-theme");
+    const nextTheme: Theme =
+      savedTheme === "dark" || savedTheme === "light"
+        ? savedTheme
+        : window.matchMedia("(prefers-color-scheme: light)").matches
+          ? "light"
+          : "dark";
+    document.documentElement.dataset.theme = nextTheme;
+    setTheme(nextTheme);
+  }, []);
+
+  function toggleTheme() {
+    setTheme((currentTheme) => {
+      const nextTheme = currentTheme === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = nextTheme;
+      window.localStorage.setItem("gasolina-theme", nextTheme);
+      return nextTheme;
+    });
+  }
 
   async function loadTickets() {
     setBusy("load");
@@ -256,19 +330,41 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     const data = (await response.json()) as { commissions?: CommissionSummary[] };
     const nextCommissions = data.commissions ?? [];
     setCommissions(nextCommissions);
-    setCommissionPayment((current) => ({
-      ...current,
-      operatorKey:
-        current.operatorKey ||
-        (nextCommissions[0]
-          ? nextCommissions[0].operatorId ?? `name:${nextCommissions[0].operatorName}`
-          : ""),
-    }));
+  }
+
+  async function loadDashboard() {
+    const response = await fetch("/api/dashboard", { cache: "no-store" });
+    if (!response.ok) return;
+    const data = (await response.json()) as { dashboard?: RoleDashboard };
+    setDashboard(data.dashboard ?? null);
+  }
+
+  async function loadNotifications() {
+    const response = await fetch("/api/notifications", { cache: "no-store" });
+    if (!response.ok) return;
+    const data = (await response.json()) as { notifications?: GasNotificationRecord[] };
+    setNotifications(data.notifications ?? []);
+  }
+
+  async function loadSettlementCandidates(kind: SettlementKind) {
+    const response = await fetch(`/api/settlements?kind=${kind}`, { cache: "no-store" });
+    if (!response.ok) return;
+    const data = (await response.json()) as { candidates?: SettlementCandidate[] };
+    const candidates = data.candidates ?? [];
+    const first = candidates[0];
+    setSettlementCandidates(candidates);
+    setSettlementEntity(first ? first.entityId ?? `name:${first.entityName}` : "");
+    setSelectedSettlementTickets([]);
   }
 
   useEffect(() => {
     uploadQueueRef.current = uploadQueue;
   }, [uploadQueue]);
+
+  useEffect(() => {
+    setLoginName(window.localStorage.getItem("gas_operator_name") ?? "");
+    setLoginEmail(window.localStorage.getItem("gas_client_email") ?? "");
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -291,6 +387,14 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
           rfc: data.client.rfc,
           email: data.client.email,
           taxRegime: data.client.taxRegime,
+          fiscalAddressLine1: data.client.fiscalAddressLine1,
+          fiscalAddressLine2: data.client.fiscalAddressLine2,
+          fiscalCity: data.client.fiscalCity,
+          fiscalState: data.client.fiscalState,
+          fiscalPostalCode: data.client.fiscalPostalCode,
+          fiscalCountry: data.client.fiscalCountry,
+          phone: data.client.phone,
+          cfdiUse: data.client.cfdiUse,
         });
       })
       .catch(() => undefined);
@@ -303,12 +407,13 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
   useEffect(() => {
     if (!session) return;
     void loadReports();
+    void loadNotifications();
+    if (isOperator || isClient) void loadDashboard();
     if (isAdmin) void loadOperators();
-    if (isAdmin || isOperator) {
-      void loadClients();
-      void loadCommissions();
-    }
-  }, [isAdmin, isOperator, session]);
+    if (isAdmin) void loadClients();
+    if (isAdmin || isOperator) void loadCommissions();
+    if (isAdmin) void loadSettlementCandidates(settlementKind);
+  }, [isAdmin, isClient, isOperator, session, settlementKind]);
 
   function addReceiptFiles(files: FileList | null) {
     const nextFiles = Array.from(files ?? []);
@@ -367,6 +472,10 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     setPassword("");
     setMessage(null);
     setSession(data.session);
+    setDashboard(null);
+    setNotifications([]);
+    if (data.session.role === "operator") window.localStorage.setItem("gas_operator_name", loginName.trim());
+    if (data.session.role === "client") window.localStorage.setItem("gas_client_email", loginEmail.trim());
     setUploadedBy(data.session.name ?? "");
     setSelectedClientId(data.session.clientId ?? "");
     if (data.session.role === "client") {
@@ -386,6 +495,10 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     setClients([]);
     setMonthlyReport([]);
     setCommissions([]);
+    setDashboard(null);
+    setNotifications([]);
+    setSettlementCandidates([]);
+    setSelectedSettlementTickets([]);
     setMessage(null);
   }
 
@@ -439,36 +552,6 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     await loadClients();
   }
 
-  async function payCommission(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const summary = commissions.find(
-      (item) => (item.operatorId ?? `name:${item.operatorName}`) === commissionPayment.operatorKey,
-    );
-    if (!summary) return;
-
-    setBusy("commission-payment");
-    const response = await fetch("/api/commissions", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        operatorId: summary.operatorId,
-        operatorName: summary.operatorName,
-        amount: commissionPayment.amount,
-      }),
-    });
-    const data = (await response.json()) as { paymentId?: string; error?: string };
-    setBusy(null);
-
-    if (!response.ok || !data.paymentId) {
-      setMessage({ type: "error", text: data.error ?? "No se pudo registrar el pago." });
-      return;
-    }
-
-    setCommissionPayment((current) => ({ ...current, amount: "" }));
-    setMessage({ type: "success", text: `Pago de comision registrado para ${summary.operatorName}.` });
-    await loadCommissions();
-  }
-
   async function saveClientProfile(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy("client-profile");
@@ -495,9 +578,65 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
       rfc: data.client.rfc,
       email: data.client.email,
       taxRegime: data.client.taxRegime,
+      fiscalAddressLine1: data.client.fiscalAddressLine1,
+      fiscalAddressLine2: data.client.fiscalAddressLine2,
+      fiscalCity: data.client.fiscalCity,
+      fiscalState: data.client.fiscalState,
+      fiscalPostalCode: data.client.fiscalPostalCode,
+      fiscalCountry: data.client.fiscalCountry,
+      phone: data.client.phone,
+      cfdiUse: data.client.cfdiUse,
     });
     setMessage({ type: "success", text: "Perfil fiscal guardado." });
     await loadTickets();
+  }
+
+  async function assignTicket(ticketId: string) {
+    const clientId = ticketAssignments[ticketId];
+    if (!clientId) {
+      setMessage({ type: "error", text: "Selecciona un cliente para asignar el ticket." });
+      return;
+    }
+    setBusy(`assign-${ticketId}`);
+    const response = await fetch("/api/tickets", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ticketId, clientId }),
+    });
+    const data = (await response.json()) as { ticket?: GasTicketRecord; error?: string };
+    setBusy(null);
+    if (!response.ok || !data.ticket) {
+      setMessage({ type: "error", text: data.error ?? "No se pudo asignar el ticket." });
+      return;
+    }
+    setMessage({ type: "success", text: `Ticket ${data.ticket.folio} asignado a ${data.ticket.clientName}.` });
+    await loadTickets();
+  }
+
+  async function recordSettlement() {
+    if (selectedSettlementTickets.length === 0) return;
+    setBusy("settlement");
+    const response = await fetch("/api/settlements", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: settlementKind, ticketIds: selectedSettlementTickets }),
+    });
+    const data = (await response.json()) as { settlementId?: string; error?: string };
+    setBusy(null);
+    if (!response.ok || !data.settlementId) {
+      setMessage({ type: "error", text: data.error ?? "No se pudo registrar el movimiento." });
+      return;
+    }
+    setMessage({
+      type: "success",
+      text: `${settlementKind === "operator_withdrawal" ? "Retiro" : "Pago"} de ${formatCurrency(selectedSettlementAmount)} registrado. Los tickets quedaron bloqueados.`,
+    });
+    await Promise.all([
+      loadSettlementCandidates(settlementKind),
+      loadCommissions(),
+      loadReports(),
+      loadNotifications(),
+    ]);
   }
 
   async function uploadReceipt(event: React.FormEvent<HTMLFormElement>) {
@@ -511,6 +650,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     setBusy("upload");
     let successCount = 0;
     let errorCount = 0;
+    let resubmitCount = 0;
     let ticketsCreated = 0;
 
     for (const item of uploads) {
@@ -525,7 +665,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
       const formData = new FormData();
       formData.set("receipt", item.file);
       formData.set("uploadedBy", uploadedBy || session?.name || "");
-      const clientId = session?.role === "client" ? session.clientId : selectedClientId;
+      const clientId = session?.role === "admin" ? selectedClientId : "";
       if (clientId) formData.set("clientId", clientId);
 
       try {
@@ -544,6 +684,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
         }
 
         successCount += 1;
+        if (data.skippedReason || (data.ticketsCreated ?? 0) === 0) resubmitCount += 1;
         ticketsCreated += data.ticketsCreated ?? 0;
         setUploadQueue((queue) =>
           queue.map((candidate) =>
@@ -576,13 +717,15 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     setBusy(null);
 
     setMessage({
-      type: errorCount > 0 ? "error" : "success",
+      type: errorCount > 0 || resubmitCount > 0 ? "error" : "success",
       text:
         errorCount > 0
           ? `${successCount} recibo${successCount === 1 ? "" : "s"} guardado${successCount === 1 ? "" : "s"}, ${errorCount} con error.`
-          : `${successCount} recibo${successCount === 1 ? "" : "s"} guardado${successCount === 1 ? "" : "s"}. Tickets detectados: ${ticketsCreated}.`,
+          : resubmitCount > 0
+            ? `${resubmitCount} recibo${resubmitCount === 1 ? " necesita" : "s necesitan"} una foto nueva.`
+            : `${successCount} recibo${successCount === 1 ? "" : "s"} guardado${successCount === 1 ? "" : "s"}. Tickets detectados: ${ticketsCreated}.`,
     });
-    if (successCount > 0) await loadTickets();
+    if (successCount > 0) await Promise.all([loadTickets(), loadNotifications()]);
   }
 
   async function createManual(event: React.FormEvent<HTMLFormElement>) {
@@ -635,6 +778,15 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     return (
       <main className="login-screen">
         <form className="login-panel stack" onSubmit={login}>
+          <button
+            className="theme-toggle login-theme-toggle"
+            type="button"
+            onClick={toggleTheme}
+            aria-label={theme === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro"}
+            title={theme === "dark" ? "Tema claro" : "Tema oscuro"}
+          >
+            {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+          </button>
           <span className="brand-mark">
             <LockKeyhole size={22} />
           </span>
@@ -702,7 +854,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell role-${session.role}`} id="top">
       <aside className="sidebar">
         <span className="brand-mark">
           <Fuel size={24} />
@@ -711,6 +863,12 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
         <p>{roleLabels[session.role]}{session.name ? `: ${session.name}` : ""}</p>
 
         <div className="sidebar-list">
+          {isAdmin && (
+            <a className="sidebar-row sidebar-link" href="#role-management">
+              <KeyRound size={16} />
+              Gestion de roles
+            </a>
+          )}
           <div className="sidebar-row">
             <Camera size={16} />
             Recibos
@@ -731,16 +889,44 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               {session.clientId ? "Perfil listo" : "Perfil pendiente"}
             </div>
           )}
+          {(isOperator || isClient) && (
+            <div className="sidebar-row">
+              <Bell size={16} />
+              {notifications.filter((notification) => !notification.readAt).length} notificaciones
+            </div>
+          )}
         </div>
       </aside>
 
       <section className="main">
         <div className="topbar">
           <div>
-            <p className="eyebrow">Operaciones</p>
-            <h2>{isClient ? "Cuenta fiscal" : "Recibos y facturas"}</h2>
+            <p className="eyebrow">{isOperator ? "Gasolina" : "Operaciones"}</p>
+            <h2>
+              {isClient
+                ? "Mi cuenta"
+                : isOperator
+                  ? `Hola${session.name ? `, ${session.name.split(" ")[0]}` : ""}`
+                  : "Pagos semanales"}
+            </h2>
           </div>
           <div className="toolbar">
+            <button
+              className="theme-toggle"
+              type="button"
+              onClick={toggleTheme}
+              aria-label={theme === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro"}
+              title={theme === "dark" ? "Tema claro" : "Tema oscuro"}
+            >
+              {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+              <span>{theme === "dark" ? "Claro" : "Oscuro"}</span>
+            </button>
+            {isAdmin && (
+              <a className="button secondary" href="#role-management">
+                <UserPlus size={16} />
+                Gestionar roles
+              </a>
+            )}
             <button className="button secondary" type="button" onClick={loadTickets} disabled={busy === "load"}>
               <RefreshCw size={16} />
               Actualizar
@@ -765,12 +951,176 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
 
         {message && <StatusMessage message={message} />}
 
-        <div className="grid" style={{ marginTop: message ? 14 : 0 }}>
+        {isAdmin && (
+          <section className="role-management" id="role-management">
+            <div className="role-management-header">
+              <div>
+                <p className="eyebrow">Administracion</p>
+                <h3>Gestion de roles</h3>
+                <p>Crea accesos y revisa quien puede operar, administrar o consultar su cuenta.</p>
+              </div>
+              <KeyRound size={22} />
+            </div>
+            <div className="role-management-grid">
+              <article className="role-card">
+                <div className="role-card-title">
+                  <span className="role-icon"><KeyRound size={17} /></span>
+                  <div><strong>Administradores</strong><span>Control total</span></div>
+                </div>
+                <p>Gestionan cuentas, asignan tickets, envian facturas y registran pagos.</p>
+                <span className="role-count">Acceso por configuracion</span>
+              </article>
+              <article className="role-card">
+                <div className="role-card-title">
+                  <span className="role-icon"><UserRound size={17} /></span>
+                  <div><strong>Operadores</strong><span>Operacion diaria</span></div>
+                </div>
+                <p>Capturan recibos y consultan tickets, compensaciones y notificaciones propias.</p>
+                <a href="#operator-accounts">{operators.length} cuenta{operators.length === 1 ? "" : "s"} · Administrar</a>
+              </article>
+              <article className="role-card">
+                <div className="role-card-title">
+                  <span className="role-icon"><Building2 size={17} /></span>
+                  <div><strong>Clientes</strong><span>Consulta y perfil fiscal</span></div>
+                </div>
+                <p>Revisan sus tickets, reportes, comisiones y mantienen sus datos fiscales.</p>
+                <a href="#client-accounts">{clients.length} cuenta{clients.length === 1 ? "" : "s"} · Administrar</a>
+              </article>
+            </div>
+          </section>
+        )}
+
+        {(isOperator || isClient) && dashboard && (
+          <section
+            className={`role-overview ${isOperator ? "operator-overview" : ""}`}
+            style={{ marginTop: message ? 14 : 0 }}
+          >
+            {isOperator ? (
+              <>
+                <div className="operator-hero-grid">
+                  <article className="commission-hero">
+                    <div className="metric-card-header">
+                      <span>Comision acumulada</span>
+                      <div className="period-toggle">
+                        <button
+                          type="button"
+                          className={compensationPeriod === "week" ? "active" : ""}
+                          onClick={() => setCompensationPeriod("week")}
+                        >
+                          Semana
+                        </button>
+                        <button
+                          type="button"
+                          className={compensationPeriod === "month" ? "active" : ""}
+                          onClick={() => setCompensationPeriod("month")}
+                        >
+                          Mes
+                        </button>
+                      </div>
+                    </div>
+                    <strong>
+                      {formatCurrency(
+                        compensationPeriod === "week"
+                          ? dashboard.compensationWeek
+                          : dashboard.compensationMonth,
+                      )}
+                    </strong>
+                    <small>10% del IVA · {formatCurrency(dashboard.pendingPayments)} pendiente de pago</small>
+                    <a
+                      className="button full"
+                      href={process.env.NEXT_PUBLIC_ADMIN_CONTACT_URL ?? "mailto:admin@example.com"}
+                    >
+                      <WalletCards size={17} />
+                      Solicitar pago semanal
+                    </a>
+                  </article>
+                  <a className="scan-cta" href="#upload-receipts">
+                    <Camera size={24} />
+                    <span>Escanear ticket</span>
+                  </a>
+                </div>
+                <div className="operator-stats">
+                  <article>
+                    <strong>{tickets.length}</strong>
+                    <span>tickets</span>
+                  </article>
+                  <article className="stat-success">
+                    <strong>
+                      {
+                        tickets.filter(
+                          (ticket) => ticket.status !== "needs_review" && ticket.status !== "failed",
+                        ).length
+                      }
+                    </strong>
+                    <span>reconocidos</span>
+                  </article>
+                  <article className="stat-warning">
+                    <strong>
+                      {
+                        tickets.filter(
+                          (ticket) => ticket.status === "needs_review" || ticket.status === "failed",
+                        ).length
+                      }
+                    </strong>
+                    <span>por revisar</span>
+                  </article>
+                </div>
+                <div className="overview-actions">
+                  <a
+                    className="button secondary"
+                    href={process.env.NEXT_PUBLIC_ADMIN_CONTACT_URL ?? "mailto:admin@example.com"}
+                  >
+                    <MessageCircle size={16} />
+                    Contactar Admin
+                  </a>
+                </div>
+              </>
+            ) : (
+              <div className="metric-grid">
+                <article className="metric-card">
+                  <span>Tickets facturados este mes</span>
+                  <strong>{dashboard.submittedThisMonth}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>IVA este mes</span>
+                  <strong>{formatCurrency(dashboard.ivaThisMonth)}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>Comision del mes</span>
+                  <strong>{formatCurrency(dashboard.clientCommissionMonth)}</strong>
+                  <small>30% del IVA facturado</small>
+                </article>
+                <article className="metric-card pending-metric">
+                  <span>Pago pendiente</span>
+                  <strong>{formatCurrency(dashboard.pendingPayments)}</strong>
+                </article>
+              </div>
+            )}
+            <div className="notification-strip" id="role-notifications">
+              <div className="notification-strip-title"><Bell size={17} /><strong>Notificaciones</strong></div>
+              {notifications.length === 0 ? (
+                <span className="empty-compact">No tienes notificaciones nuevas.</span>
+              ) : (
+                notifications.slice(0, 3).map((notification) => (
+                  <div className="notification-item" key={notification.id}>
+                    <span className={`notification-dot ${notification.readAt ? "read" : ""}`} />
+                    <div><strong>{notification.title}</strong><span>{notification.message}</span></div>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        )}
+
+        <div className="grid" style={{ marginTop: 14 }}>
           <div className="stack">
             {isAdmin && (
-              <section className="panel">
+              <section className="panel" id="operator-accounts">
                 <div className="panel-header">
-                  <h3>Operadores</h3>
+                  <div>
+                    <p className="eyebrow">Rol operador</p>
+                    <h3>Cuentas de operadores</h3>
+                  </div>
                   <UserPlus size={18} />
                 </div>
                 <form className="panel-body stack" onSubmit={saveOperator}>
@@ -816,9 +1166,12 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
             )}
 
             {isAdmin && (
-              <section className="panel">
+              <section className="panel" id="client-accounts">
                 <div className="panel-header">
-                  <h3>Cuentas de clientes</h3>
+                  <div>
+                    <p className="eyebrow">Rol cliente</p>
+                    <h3>Cuentas de clientes</h3>
+                  </div>
                   <Building2 size={18} />
                 </div>
                 <form className="panel-body stack" onSubmit={saveClientAccount}>
@@ -886,7 +1239,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                       {clients.map((client) => (
                         <div className="mini-row" key={client.id}>
                           <span>{client.name}</span>
-                          <span>{client.rfc}</span>
+                          <span>{clientProfileReady(client) ? client.rfc : "Perfil incompleto"}</span>
                         </div>
                       ))}
                     </div>
@@ -895,7 +1248,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               </section>
             )}
 
-            {(isAdmin || isOperator) && (
+            {isOperator && (
               <section className="panel">
                 <div className="panel-header">
                   <h3>Comisiones</h3>
@@ -916,61 +1269,91 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                     ))}
                     {commissions.length === 0 && <div className="empty-compact">Sin comisiones registradas.</div>}
                   </div>
-                  {isAdmin && commissions.length > 0 && (
-                    <form className="stack commission-form" onSubmit={payCommission}>
+                </div>
+              </section>
+            )}
+
+            {isAdmin && (
+              <section className="panel">
+                <div className="panel-header">
+                  <div>
+                    <h3>Retiros y pagos manuales</h3>
+                    <span className="panel-subtitle">Selecciona tickets para bloquearlos al registrar el movimiento</span>
+                  </div>
+                  <WalletCards size={18} />
+                </div>
+                <div className="panel-body stack">
+                  <div className="segmented">
+                    <button
+                      type="button"
+                      className={settlementKind === "operator_withdrawal" ? "active" : ""}
+                      onClick={() => setSettlementKind("operator_withdrawal")}
+                    >Retiros operadores</button>
+                    <button
+                      type="button"
+                      className={settlementKind === "client_payment" ? "active" : ""}
+                      onClick={() => setSettlementKind("client_payment")}
+                    >Pagos clientes</button>
+                  </div>
+                  {settlementEntities.length === 0 ? (
+                    <div className="empty-compact">No hay tickets pendientes de liquidar.</div>
+                  ) : (
+                    <>
                       <div className="field">
-                        <label htmlFor="commissionOperator">Operador</label>
+                        <label htmlFor="settlementEntity">
+                          {settlementKind === "operator_withdrawal" ? "Operador" : "Cliente"}
+                        </label>
                         <select
-                          id="commissionOperator"
-                          value={commissionPayment.operatorKey}
+                          id="settlementEntity"
+                          value={settlementEntity}
                           onChange={(event) => {
-                            const summary = commissions.find(
-                              (item) =>
-                                (item.operatorId ?? `name:${item.operatorName}`) === event.target.value,
-                            );
-                            setCommissionPayment({
-                              operatorKey: event.target.value,
-                              amount: summary?.pendingAmount ? String(summary.pendingAmount) : "",
-                            });
+                            setSettlementEntity(event.target.value);
+                            setSelectedSettlementTickets([]);
                           }}
                         >
-                          {commissions.map((commission) => {
-                            const key = commission.operatorId ?? `name:${commission.operatorName}`;
-                            return <option key={key} value={key}>{commission.operatorName}</option>;
-                          })}
+                          {settlementEntities.map(([key, name]) => <option key={key} value={key}>{name}</option>)}
                         </select>
                       </div>
-                      <div className="field">
-                        <label htmlFor="commissionAmount">Monto pagado</label>
-                        <input
-                          id="commissionAmount"
-                          type="number"
-                          min="0.01"
-                          max={selectedCommission?.pendingAmount || undefined}
-                          step="0.01"
-                          value={commissionPayment.amount}
-                          onChange={(event) =>
-                            setCommissionPayment((current) => ({ ...current, amount: event.target.value }))
-                          }
-                          required
-                        />
+                      <div className="settlement-list">
+                        {visibleSettlementCandidates.map((candidate) => (
+                          <label className="settlement-ticket" key={candidate.ticketId}>
+                            <input
+                              type="checkbox"
+                              checked={selectedSettlementTickets.includes(candidate.ticketId)}
+                              onChange={(event) =>
+                                setSelectedSettlementTickets((current) =>
+                                  event.target.checked
+                                    ? [...current, candidate.ticketId]
+                                    : current.filter((id) => id !== candidate.ticketId),
+                                )
+                              }
+                            />
+                            <span><strong>Folio {candidate.folio}</strong><small>{formatTicketDate(candidate.ticketDate)}</small></span>
+                            <strong>{formatCurrency(candidate.amount)}</strong>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="settlement-total">
+                        <span>{selectedSettlementTickets.length} tickets seleccionados</span>
+                        <strong>{formatCurrency(selectedSettlementAmount)}</strong>
                       </div>
                       <button
                         className="button full"
-                        type="submit"
-                        disabled={busy === "commission-payment" || !selectedCommission?.pendingAmount}
+                        type="button"
+                        disabled={busy === "settlement" || selectedSettlementTickets.length === 0}
+                        onClick={recordSettlement}
                       >
                         <CheckCircle2 size={16} />
-                        Registrar pago
+                        {settlementKind === "operator_withdrawal" ? "Registrar retiro" : "Registrar pago"}
                       </button>
-                    </form>
+                    </>
                   )}
                 </div>
               </section>
             )}
 
             {isClient && (
-              <section className="panel">
+              <section className="panel" id="client-profile">
                 <div className="panel-header">
                   <h3>Perfil fiscal</h3>
                   <UserRound size={18} />
@@ -1013,6 +1396,79 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                       required
                     />
                   </div>
+                  <div className="field">
+                    <label htmlFor="clientAddress1">Direccion fiscal</label>
+                    <input
+                      id="clientAddress1"
+                      value={clientForm.fiscalAddressLine1}
+                      onChange={(event) =>
+                        setClientForm((form) => ({ ...form, fiscalAddressLine1: event.target.value }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="clientAddress2">Colonia / Interior</label>
+                    <input
+                      id="clientAddress2"
+                      value={clientForm.fiscalAddressLine2}
+                      onChange={(event) =>
+                        setClientForm((form) => ({ ...form, fiscalAddressLine2: event.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="field-row">
+                    <div className="field">
+                      <label htmlFor="clientCity">Ciudad</label>
+                      <input
+                        id="clientCity"
+                        value={clientForm.fiscalCity}
+                        onChange={(event) => setClientForm((form) => ({ ...form, fiscalCity: event.target.value }))}
+                        required
+                      />
+                    </div>
+                    <div className="field">
+                      <label htmlFor="clientState">Estado</label>
+                      <input
+                        id="clientState"
+                        value={clientForm.fiscalState}
+                        onChange={(event) => setClientForm((form) => ({ ...form, fiscalState: event.target.value }))}
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div className="field-row">
+                    <div className="field">
+                      <label htmlFor="clientPostalCode">Codigo postal fiscal</label>
+                      <input
+                        id="clientPostalCode"
+                        inputMode="numeric"
+                        value={clientForm.fiscalPostalCode}
+                        onChange={(event) =>
+                          setClientForm((form) => ({ ...form, fiscalPostalCode: event.target.value }))
+                        }
+                        required
+                      />
+                    </div>
+                    <div className="field">
+                      <label htmlFor="clientCfdiUse">Uso CFDI</label>
+                      <input
+                        id="clientCfdiUse"
+                        value={clientForm.cfdiUse}
+                        onChange={(event) => setClientForm((form) => ({ ...form, cfdiUse: event.target.value }))}
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label htmlFor="clientPhone">Telefono</label>
+                    <input
+                      id="clientPhone"
+                      type="tel"
+                      value={clientForm.phone}
+                      onChange={(event) => setClientForm((form) => ({ ...form, phone: event.target.value }))}
+                    />
+                  </div>
                   <button className="button full" type="submit" disabled={busy === "client-profile"}>
                     <UserRound size={16} />
                     Guardar perfil
@@ -1021,13 +1477,14 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               </section>
             )}
 
-            <section className="panel">
+            {!isClient && (
+            <section className="panel" id="upload-receipts">
               <div className="panel-header">
                 <h3>Subir recibo</h3>
                 <Upload size={18} />
               </div>
               <form className="panel-body stack" onSubmit={uploadReceipt}>
-                {!isClient && (
+                {isAdmin && (
                   <div className="field">
                     <label htmlFor="uploadClient">Cuenta del cliente</label>
                     <select
@@ -1038,7 +1495,9 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                     >
                       <option value="">Seleccionar cliente</option>
                       {clients.map((client) => (
-                        <option value={client.id} key={client.id}>{client.name} - {client.rfc}</option>
+                        <option value={client.id} key={client.id}>
+                          {client.name} - {clientProfileReady(client) ? client.rfc : "perfil pendiente"}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -1108,7 +1567,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                     </div>
                   </div>
                 )}
-                {!isClient && (
+                {isAdmin && (
                   <div className="field">
                     <label htmlFor="uploadedBy">Operador</label>
                     <input
@@ -1125,7 +1584,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                   disabled={
                     busy === "upload" ||
                     queuedUploadCount === 0 ||
-                    (isClient ? !session.clientId : !selectedClientId)
+                    (isAdmin ? !selectedClientId : false)
                   }
                 >
                   <Upload size={16} />
@@ -1133,6 +1592,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                 </button>
               </form>
             </section>
+            )}
 
             {isAdmin && (
               <section className="panel">
@@ -1151,7 +1611,9 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                     >
                       <option value="">Seleccionar cliente</option>
                       {clients.map((client) => (
-                        <option value={client.id} key={client.id}>{client.name} - {client.rfc}</option>
+                        <option value={client.id} key={client.id}>
+                          {client.name} - {clientProfileReady(client) ? client.rfc : "perfil pendiente"}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -1226,7 +1688,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
           </div>
 
           <div className="stack">
-          <section className="panel">
+          <section className="panel" id="ticket-pool">
             <div className="panel-header">
               <h3>{isOperator ? "Mis tickets" : "Cola de factura"}</h3>
               <span className="status-pill submit_pending">{pendingCount} pendientes</span>
@@ -1234,7 +1696,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
             <div className="table-wrap">
               {tickets.length === 0 ? (
                 <div className="empty-state">No hay tickets pendientes.</div>
-              ) : (
+              ) : isAdmin ? (
                 <table>
                   <thead>
                     <tr>
@@ -1244,7 +1706,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                       {isAdmin && <th>Operador</th>}
                       <th>Total</th>
                       <th>IVA</th>
-                      {(isAdmin || isOperator) && <th>Comision</th>}
+                      {(isAdmin || isOperator) && <th>Comp. 10%</th>}
                       <th>Estado</th>
                       <th>Recibo</th>
                       {isAdmin && <th>Accion</th>}
@@ -1255,7 +1717,27 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                       <tr key={ticket.id}>
                         <td className="num">{formatTicketDate(ticket.ticketDate)}</td>
                         <td className="num">{ticket.folio}</td>
-                        {isAdmin && <td>{ticket.clientName ?? "Sin cliente"}</td>}
+                        {isAdmin && (
+                          <td>
+                            <select
+                              className="table-select"
+                              value={ticketAssignments[ticket.id] ?? ticket.clientId ?? ""}
+                              onChange={(event) =>
+                                setTicketAssignments((current) => ({
+                                  ...current,
+                                  [ticket.id]: event.target.value,
+                                }))
+                              }
+                            >
+                              <option value="">Sin asignar</option>
+                              {clients.map((client) => (
+                                <option value={client.id} key={client.id}>
+                                  {client.name}{clientProfileReady(client) ? "" : " (perfil pendiente)"}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                        )}
                         {isAdmin && <td>{ticket.operatorName ?? "Manual"}</td>}
                         <td className="num">{formatCurrency(ticket.importeTotal)}</td>
                         <td className="num">{ticket.iva === null ? "-" : formatCurrency(ticket.iva)}</td>
@@ -1276,6 +1758,22 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                         {isAdmin && (
                           <td>
                             {(() => {
+                              const assignment = ticketAssignments[ticket.id] ?? ticket.clientId ?? "";
+                              if (assignment && assignment !== ticket.clientId) {
+                                return (
+                                  <button
+                                    className="button secondary action-button"
+                                    type="button"
+                                    onClick={() => assignTicket(ticket.id)}
+                                    disabled={busy === `assign-${ticket.id}`}
+                                  >
+                                    <UserRound size={14} />Asignar
+                                  </button>
+                                );
+                              }
+                              if (!ticket.clientId) {
+                                return <span className="action-badge neutral">Selecciona cliente</span>;
+                              }
                               const action = getRowActionState(ticket);
                               if (action.kind === "submit") {
                                 return (
@@ -1299,10 +1797,31 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                     ))}
                   </tbody>
                 </table>
+              ) : (
+                <div className="role-ticket-list">
+                  {tickets.map((ticket) => (
+                    <article className="role-ticket-card" key={ticket.id}>
+                      <div className="role-ticket-title">
+                        <div><span>Folio</span><strong>{ticket.folio}</strong></div>
+                        <span className={`status-pill ${ticket.status}`}>
+                          {statusIcon(ticket.status)}{statusLabels[ticket.status]}
+                        </span>
+                      </div>
+                      <div className="role-ticket-values">
+                        <div><span>Fecha</span><strong>{formatTicketDate(ticket.ticketDate)}</strong></div>
+                        <div><span>Total</span><strong>{formatCurrency(ticket.importeTotal)}</strong></div>
+                        <div><span>IVA</span><strong>{formatCurrency(ticket.iva)}</strong></div>
+                        {isOperator && (
+                          <div><span>Comp. estimada</span><strong>{formatCurrency(ticket.operatorCommission)}</strong></div>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
               )}
             </div>
           </section>
-          <section className="panel">
+          <section className="panel" id="monthly-report">
             <div className="panel-header">
               <div>
                 <h3>Tickets enviados por mes</h3>
@@ -1320,6 +1839,9 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                       <th>Mes</th>
                       <th>Tickets enviados</th>
                       <th>Total facturado</th>
+                      <th>IVA</th>
+                      {isClient && <th>Comision 30%</th>}
+                      {isClient && <th>Pagado</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -1328,6 +1850,9 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                         <td className="month-cell"><CalendarDays size={15} />{formatMonth(month.month)}</td>
                         <td className="num"><strong>{month.submittedCount}</strong></td>
                         <td className="num">{formatCurrency(month.submittedTotal)}</td>
+                        <td className="num">{formatCurrency(month.ivaTotal)}</td>
+                        {isClient && <td className="num">{formatCurrency(month.clientCommission)}</td>}
+                        {isClient && <td className="num">{formatCurrency(month.clientCommissionPaid)}</td>}
                       </tr>
                     ))}
                   </tbody>
@@ -1338,6 +1863,20 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
           </div>
         </div>
       </section>
+      {(isOperator || isClient) && (
+        <nav className="mobile-nav" aria-label="Navegacion principal">
+          <a href="#top"><Fuel size={18} /><span>Inicio</span></a>
+          {isOperator ? (
+            <a href="#upload-receipts"><Camera size={18} /><span>Escanear</span></a>
+          ) : (
+            <a href="#client-profile"><UserRound size={18} /><span>Perfil</span></a>
+          )}
+          <a href={isClient ? "#monthly-report" : "#ticket-pool"}>
+            <BarChart3 size={18} /><span>{isClient ? "Reportes" : "Tickets"}</span>
+          </a>
+          <a href="#role-notifications"><Bell size={18} /><span>Avisos</span></a>
+        </nav>
+      )}
     </main>
   );
 }

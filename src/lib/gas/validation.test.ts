@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { normalizePaymentType, normalizeTicketDate, validateTicketInput } from "@/lib/gas/validation";
+import {
+  clientCommissionFromIva,
+  normalizePaymentType,
+  normalizeTicketDate,
+  operatorCompensationFromIva,
+  validateTicketInput,
+} from "@/lib/gas/validation";
 
 describe("gas ticket validation", () => {
   it("normalizes Spanish payment labels", () => {
@@ -36,5 +42,10 @@ describe("gas ticket validation", () => {
     expect(normalizeTicketDate("14/07/2026")).toBe("2026-07-14");
     expect(normalizeTicketDate("2026-07-14")).toBe("2026-07-14");
     expect(normalizeTicketDate("31/02/2026")).toBeNull();
+  });
+
+  it("calculates operator and client amounts from IVA", () => {
+    expect(operatorCompensationFromIva(144.38)).toBe(14.44);
+    expect(clientCommissionFromIva(144.38)).toBe(43.31);
   });
 });
