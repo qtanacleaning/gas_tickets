@@ -9,21 +9,27 @@ import {
   CalendarDays,
   Camera,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   FilePlus2,
   Fuel,
   KeyRound,
+  LayoutDashboard,
   LockKeyhole,
   LogOut,
   MessageCircle,
   Moon,
   RefreshCw,
+  Search,
   Send,
   Sun,
+  Ticket,
   Trash2,
   Upload,
   UserRound,
   UserPlus,
+  UsersRound,
   WalletCards,
 } from "lucide-react";
 import type { AppSession } from "@/lib/auth";
@@ -55,6 +61,9 @@ type Message = {
 
 type UploadQueueStatus = "queued" | "uploading" | "done" | "error";
 type Theme = "dark" | "light";
+type AdminPage = "resumen" | "pagos" | "aprobaciones" | "usuarios" | "tickets";
+type AdminUserTab = "operadores" | "clientes";
+type AdminTicketFilter = "all" | "recognized" | "review" | "rejected";
 
 type UploadQueueItem = {
   id: string;
@@ -88,6 +97,14 @@ const roleLabels: Record<UserRole, string> = {
   admin: "Admin",
   operator: "Operador",
   client: "Cliente",
+};
+
+const adminPageMeta: Record<AdminPage, { eyebrow: string; title: string }> = {
+  resumen: { eyebrow: "Panel", title: "Resumen de la semana" },
+  pagos: { eyebrow: "Finanzas", title: "Pagos semanales" },
+  aprobaciones: { eyebrow: "Onboarding", title: "Aprobaciones de operadores" },
+  usuarios: { eyebrow: "Directorio", title: "Usuarios" },
+  tickets: { eyebrow: "Operacion", title: "Todos los tickets" },
 };
 
 function statusIcon(status: GasTicketStatus) {
@@ -179,6 +196,10 @@ function summarizeSubmitResults(results: SubmitResult[]): Message {
 
 export function OperatorPortal({ initialSession, initialTickets }: OperatorPortalProps) {
   const [theme, setTheme] = useState<Theme>("dark");
+  const [adminPage, setAdminPage] = useState<AdminPage>("resumen");
+  const [adminUserTab, setAdminUserTab] = useState<AdminUserTab>("operadores");
+  const [adminTicketFilter, setAdminTicketFilter] = useState<AdminTicketFilter>("all");
+  const [adminSearch, setAdminSearch] = useState("");
   const [session, setSession] = useState<AppSession | null>(initialSession);
   const [loginRole, setLoginRole] = useState<UserRole>("operator");
   const [password, setPassword] = useState("");
@@ -269,6 +290,45 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
         .reduce((sum, candidate) => sum + candidate.amount, 0),
     [selectedSettlementTickets, visibleSettlementCandidates],
   );
+  const pendingApprovals = useMemo(
+    () => operators.filter((operator) => !operator.active),
+    [operators],
+  );
+  const recognizedTicketCount = useMemo(
+    () =>
+      tickets.filter(
+        (ticket) =>
+          ticket.status === "submitted" ||
+          ticket.status === "already_invoiced" ||
+          ticket.status === "submit_pending",
+      ).length,
+    [tickets],
+  );
+  const reviewTicketCount = useMemo(
+    () => tickets.filter((ticket) => ticket.status === "needs_review").length,
+    [tickets],
+  );
+  const rejectedTicketCount = useMemo(
+    () => tickets.filter((ticket) => ticket.status === "failed").length,
+    [tickets],
+  );
+  const filteredAdminTickets = useMemo(() => {
+    const query = adminSearch.trim().toLocaleLowerCase("es-MX");
+    return tickets.filter((ticket) => {
+      const matchesSearch =
+        !query ||
+        ticket.folio.toLocaleLowerCase("es-MX").includes(query) ||
+        (ticket.operatorName ?? "").toLocaleLowerCase("es-MX").includes(query) ||
+        (ticket.receiptFileName ?? "").toLocaleLowerCase("es-MX").includes(query);
+      const matchesFilter =
+        adminTicketFilter === "all" ||
+        (adminTicketFilter === "recognized" &&
+          ["submitted", "already_invoiced", "submit_pending"].includes(ticket.status)) ||
+        (adminTicketFilter === "review" && ticket.status === "needs_review") ||
+        (adminTicketFilter === "rejected" && ticket.status === "failed");
+      return matchesSearch && matchesFilter;
+    });
+  }, [adminSearch, adminTicketFilter, tickets]);
 
   useEffect(() => {
     const savedTheme = window.localStorage.getItem("gasolina-theme");
@@ -856,61 +916,140 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
   return (
     <main className={`app-shell role-${session.role}`} id="top">
       <aside className="sidebar">
-        <span className="brand-mark">
-          <Fuel size={24} />
-        </span>
-        <h1>Gasolina</h1>
-        <p>{roleLabels[session.role]}{session.name ? `: ${session.name}` : ""}</p>
-
-        <div className="sidebar-list">
-          {isAdmin && (
-            <a className="sidebar-row sidebar-link" href="#role-management">
-              <KeyRound size={16} />
-              Gestion de roles
-            </a>
-          )}
-          <div className="sidebar-row">
-            <Camera size={16} />
-            Recibos
+        <div className="sidebar-brand">
+          <span className="brand-mark">
+            <Fuel size={22} />
+          </span>
+          <div>
+            <h1>Gasolina</h1>
+            <p>{roleLabels[session.role]}</p>
           </div>
-          <div className="sidebar-row">
-            <Clock3 size={16} />
-            {pendingCount} pendientes
-          </div>
-          {(isAdmin || isOperator) && (
-            <div className="sidebar-row">
-              <CheckCircle2 size={16} />
-              {formatCurrency(commissionTotal)} comision pendiente
-            </div>
-          )}
-          {isClient && (
-            <div className="sidebar-row">
-              <UserRound size={16} />
-              {session.clientId ? "Perfil listo" : "Perfil pendiente"}
-            </div>
-          )}
-          {(isOperator || isClient) && (
-            <div className="sidebar-row">
-              <Bell size={16} />
-              {notifications.filter((notification) => !notification.readAt).length} notificaciones
-            </div>
-          )}
+          {isAdmin && <span className="admin-badge">Admin</span>}
         </div>
+
+        {isAdmin ? (
+          <>
+            <nav className="admin-nav" aria-label="Navegacion de administracion">
+              <button
+                className={adminPage === "resumen" ? "active" : ""}
+                type="button"
+                onClick={() => setAdminPage("resumen")}
+              >
+                <LayoutDashboard size={18} />
+                <span>Resumen</span>
+              </button>
+              <button
+                className={adminPage === "pagos" ? "active" : ""}
+                type="button"
+                onClick={() => setAdminPage("pagos")}
+              >
+                <WalletCards size={18} />
+                <span>Pagos semanales</span>
+              </button>
+              <button
+                className={adminPage === "aprobaciones" ? "active" : ""}
+                type="button"
+                onClick={() => setAdminPage("aprobaciones")}
+              >
+                <CheckCircle2 size={18} />
+                <span>Aprobaciones</span>
+                {pendingApprovals.length > 0 && (
+                  <strong className="admin-nav-count">{pendingApprovals.length}</strong>
+                )}
+              </button>
+              <button
+                className={adminPage === "usuarios" ? "active" : ""}
+                type="button"
+                onClick={() => setAdminPage("usuarios")}
+              >
+                <UsersRound size={18} />
+                <span>Usuarios</span>
+              </button>
+              <button
+                className={adminPage === "tickets" ? "active" : ""}
+                type="button"
+                onClick={() => setAdminPage("tickets")}
+              >
+                <Ticket size={18} />
+                <span>Tickets</span>
+                {pendingCount > 0 && <strong className="admin-nav-count">{pendingCount}</strong>}
+              </button>
+            </nav>
+            <div className="sidebar-footer">
+              <div className="language-toggle" aria-label="Idioma">
+                <span className="active">ES</span>
+                <span>EN</span>
+              </div>
+              <div className="admin-user-card">
+                <span>{(session.name ?? "Admin").slice(0, 2).toUpperCase()}</span>
+                <div>
+                  <strong>{session.name ?? "Administrador"}</strong>
+                  <small>Administrador</small>
+                </div>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="sidebar-list">
+            <div className="sidebar-row">
+              <Camera size={16} />
+              Recibos
+            </div>
+            <div className="sidebar-row">
+              <Clock3 size={16} />
+              {pendingCount} pendientes
+            </div>
+            {isOperator && (
+              <div className="sidebar-row">
+                <CheckCircle2 size={16} />
+                {formatCurrency(commissionTotal)} comision pendiente
+              </div>
+            )}
+            {isClient && (
+              <div className="sidebar-row">
+                <UserRound size={16} />
+                {session.clientId ? "Perfil listo" : "Perfil pendiente"}
+              </div>
+            )}
+            {(isOperator || isClient) && (
+              <div className="sidebar-row">
+                <Bell size={16} />
+                {notifications.filter((notification) => !notification.readAt).length} notificaciones
+              </div>
+            )}
+          </div>
+        )}
       </aside>
 
       <section className="main">
-        <div className="topbar">
+        <div className={`topbar ${isAdmin ? "admin-topbar" : ""}`}>
           <div>
-            <p className="eyebrow">{isOperator ? "Gasolina" : "Operaciones"}</p>
+            <p className="eyebrow">
+              {isAdmin ? adminPageMeta[adminPage].eyebrow : isOperator ? "Gasolina" : "Operaciones"}
+            </p>
             <h2>
-              {isClient
+              {isAdmin
+                ? adminPageMeta[adminPage].title
+                : isClient
                 ? "Mi cuenta"
                 : isOperator
                   ? `Hola${session.name ? `, ${session.name.split(" ")[0]}` : ""}`
-                  : "Pagos semanales"}
+                  : ""}
             </h2>
           </div>
           <div className="toolbar">
+            {isAdmin && (
+              <label className="admin-search">
+                <Search size={16} />
+                <input
+                  value={adminSearch}
+                  onChange={(event) => setAdminSearch(event.target.value)}
+                  onFocus={() => setAdminPage("tickets")}
+                  placeholder="Buscar operador, folio..."
+                  aria-label="Buscar operador o folio"
+                />
+              </label>
+            )}
             <button
               className="theme-toggle"
               type="button"
@@ -921,17 +1060,11 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
               <span>{theme === "dark" ? "Claro" : "Oscuro"}</span>
             </button>
-            {isAdmin && (
-              <a className="button secondary" href="#role-management">
-                <UserPlus size={16} />
-                Gestionar roles
-              </a>
-            )}
             <button className="button secondary" type="button" onClick={loadTickets} disabled={busy === "load"}>
               <RefreshCw size={16} />
               Actualizar
             </button>
-            {isAdmin && (
+            {isAdmin && adminPage === "tickets" && (
               <button
                 className="button warn"
                 type="button"
@@ -951,43 +1084,200 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
 
         {message && <StatusMessage message={message} />}
 
-        {isAdmin && (
-          <section className="role-management" id="role-management">
-            <div className="role-management-header">
-              <div>
-                <p className="eyebrow">Administracion</p>
-                <h3>Gestion de roles</h3>
-                <p>Crea accesos y revisa quien puede operar, administrar o consultar su cuenta.</p>
-              </div>
-              <KeyRound size={22} />
+        {isAdmin && adminPage === "resumen" && (
+          <section className="admin-summary">
+            <div className="admin-kpi-grid">
+              <article>
+                <div><span>Comision pendiente</span><WalletCards size={17} /></div>
+                <strong>{formatCurrency(commissionTotal)}</strong>
+                <small>{commissions.length} operadores con actividad</small>
+              </article>
+              <article>
+                <div><span>Tickets procesados</span><CheckCircle2 size={17} /></div>
+                <strong>{tickets.length}</strong>
+                <small>{recognizedTicketCount} reconocidos · {reviewTicketCount + rejectedTicketCount} por revisar</small>
+              </article>
+              <article>
+                <div><span>Operadores activos</span><UsersRound size={17} /></div>
+                <strong>{operators.filter((operator) => operator.active).length}</strong>
+                <small>{pendingApprovals.length} solicitudes pendientes</small>
+              </article>
+              <article>
+                <div><span>Por pagar</span><Clock3 size={17} /></div>
+                <strong>{formatCurrency(commissionTotal)}</strong>
+                <small>{settlementCandidates.length} tickets disponibles</small>
+              </article>
             </div>
-            <div className="role-management-grid">
-              <article className="role-card">
-                <div className="role-card-title">
-                  <span className="role-icon"><KeyRound size={17} /></span>
-                  <div><strong>Administradores</strong><span>Control total</span></div>
+
+            <div className="admin-summary-grid">
+              <section className="panel admin-activity-panel">
+                <div className="panel-header">
+                  <h3>Actividad reciente</h3>
+                  <button className="link-button" type="button" onClick={() => setAdminPage("tickets")}>
+                    Ver tickets
+                  </button>
                 </div>
-                <p>Gestionan cuentas, asignan tickets, envian facturas y registran pagos.</p>
-                <span className="role-count">Acceso por configuracion</span>
-              </article>
-              <article className="role-card">
-                <div className="role-card-title">
-                  <span className="role-icon"><UserRound size={17} /></span>
-                  <div><strong>Operadores</strong><span>Operacion diaria</span></div>
+                <div className="admin-activity-list">
+                  {tickets.slice(0, 5).map((ticket) => (
+                    <article key={ticket.id}>
+                      <span className="admin-avatar">
+                        {(ticket.operatorName ?? "MA").slice(0, 2).toUpperCase()}
+                      </span>
+                      <div>
+                        <strong>{ticket.operatorName ?? "Carga manual"}</strong>
+                        <small>Ticket #{ticket.folio} · {formatTicketDate(ticket.ticketDate)}</small>
+                      </div>
+                      <span className={`status-pill ${ticket.status}`}>{statusLabels[ticket.status]}</span>
+                      <strong className="activity-amount">{formatCurrency(ticket.operatorCommission)}</strong>
+                    </article>
+                  ))}
+                  {tickets.length === 0 && <div className="empty-state">Todavia no hay actividad.</div>}
                 </div>
-                <p>Capturan recibos y consultan tickets, compensaciones y notificaciones propias.</p>
-                <a href="#operator-accounts">{operators.length} cuenta{operators.length === 1 ? "" : "s"} · Administrar</a>
-              </article>
-              <article className="role-card">
-                <div className="role-card-title">
-                  <span className="role-icon"><Building2 size={17} /></span>
-                  <div><strong>Clientes</strong><span>Consulta y perfil fiscal</span></div>
+              </section>
+
+              <section className="panel admin-approvals-preview">
+                <div className="panel-header">
+                  <h3>Aprobaciones pendientes</h3>
+                  <span className="admin-nav-count">{pendingApprovals.length}</span>
                 </div>
-                <p>Revisan sus tickets, reportes, comisiones y mantienen sus datos fiscales.</p>
-                <a href="#client-accounts">{clients.length} cuenta{clients.length === 1 ? "" : "s"} · Administrar</a>
-              </article>
+                <div className="panel-body stack">
+                  {pendingApprovals.slice(0, 2).map((operator) => (
+                    <article className="approval-preview-card" key={operator.id}>
+                      <span className="admin-avatar">{operator.name.slice(0, 2).toUpperCase()}</span>
+                      <div>
+                        <strong>{operator.name}</strong>
+                        <small>Operador · {formatTicketDate(operator.createdAt.slice(0, 10))}</small>
+                      </div>
+                    </article>
+                  ))}
+                  {pendingApprovals.length === 0 && (
+                    <div className="empty-compact">No hay solicitudes pendientes.</div>
+                  )}
+                  <button className="button secondary full" type="button" onClick={() => setAdminPage("aprobaciones")}>
+                    Ir a aprobaciones
+                  </button>
+                </div>
+              </section>
             </div>
           </section>
+        )}
+
+        {isAdmin && adminPage === "pagos" && (
+          <section className="admin-page-intro">
+            <div className="week-switcher">
+              <button type="button" aria-label="Semana anterior"><ChevronLeft size={17} /></button>
+              <strong>Semana actual</strong>
+              <button type="button" aria-label="Semana siguiente" disabled><ChevronRight size={17} /></button>
+            </div>
+            <div className="admin-inline-metrics">
+              <article><span>Total a pagar</span><strong>{formatCurrency(commissionTotal)}</strong></article>
+              <article><span>Pendientes</span><strong>{commissions.filter((item) => item.status !== "paid").length}</strong></article>
+            </div>
+          </section>
+        )}
+
+        {isAdmin && adminPage === "aprobaciones" && (
+          <section className="admin-approval-grid">
+            {pendingApprovals.map((operator) => (
+              <article className="admin-approval-card" key={operator.id}>
+                <div className="admin-approval-heading">
+                  <span className="admin-avatar">{operator.name.slice(0, 2).toUpperCase()}</span>
+                  <div>
+                    <h3>{operator.name}</h3>
+                    <p>Solicitud de acceso como operador</p>
+                  </div>
+                  <span className="status-pill needs_review">Pendiente</span>
+                </div>
+                <dl>
+                  <div><dt>Registro</dt><dd>{formatTicketDate(operator.createdAt.slice(0, 10))}</dd></div>
+                  <div><dt>Estado</dt><dd>Requiere revision</dd></div>
+                </dl>
+              </article>
+            ))}
+            {pendingApprovals.length === 0 && (
+              <section className="panel admin-empty-page">
+                <CheckCircle2 size={28} />
+                <h3>No hay aprobaciones pendientes</h3>
+                <p>Las nuevas solicitudes de operadores apareceran aqui.</p>
+              </section>
+            )}
+          </section>
+        )}
+
+        {isAdmin && adminPage === "usuarios" && (
+          <section className="admin-users-directory">
+            <div className="admin-page-tabs" role="tablist" aria-label="Tipo de usuario">
+              <button
+                className={adminUserTab === "operadores" ? "active" : ""}
+                type="button"
+                role="tab"
+                onClick={() => setAdminUserTab("operadores")}
+              >
+                Operadores
+              </button>
+              <button
+                className={adminUserTab === "clientes" ? "active" : ""}
+                type="button"
+                role="tab"
+                onClick={() => setAdminUserTab("clientes")}
+              >
+                Clientes
+              </button>
+            </div>
+            <section className="panel">
+              <div className="table-wrap">
+                <table className="admin-users-table">
+                  <thead>
+                    <tr>
+                      <th>{adminUserTab === "operadores" ? "Operador" : "Cliente"}</th>
+                      <th>{adminUserTab === "operadores" ? "Acceso" : "RFC"}</th>
+                      <th>Tickets</th>
+                      <th>Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adminUserTab === "operadores"
+                      ? operators.map((operator) => (
+                          <tr key={operator.id}>
+                            <td><span className="table-person"><span className="admin-avatar">{operator.name.slice(0, 2).toUpperCase()}</span><strong>{operator.name}</strong></span></td>
+                            <td>PIN de operador</td>
+                            <td>{tickets.filter((ticket) => ticket.operatorId === operator.id).length}</td>
+                            <td><span className={`status-pill ${operator.active ? "submitted" : "needs_review"}`}>{operator.active ? "Activo" : "Pendiente"}</span></td>
+                          </tr>
+                        ))
+                      : clients.map((client) => (
+                          <tr key={client.id}>
+                            <td><span className="table-person"><span className="admin-avatar">{client.name.slice(0, 2).toUpperCase()}</span><strong>{client.name}</strong></span></td>
+                            <td>{client.rfc || "Perfil pendiente"}</td>
+                            <td>{tickets.filter((ticket) => ticket.clientId === client.id).length}</td>
+                            <td><span className={`status-pill ${clientProfileReady(client) ? "submitted" : "needs_review"}`}>{clientProfileReady(client) ? "Activo" : "Incompleto"}</span></td>
+                          </tr>
+                        ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+        )}
+
+        {isAdmin && adminPage === "tickets" && (
+          <div className="admin-ticket-filters" role="group" aria-label="Filtrar tickets por estado">
+            {([
+              ["all", `Todos ${tickets.length}`],
+              ["recognized", `Reconocidos ${recognizedTicketCount}`],
+              ["review", `Por revisar ${reviewTicketCount}`],
+              ["rejected", `Rechazados ${rejectedTicketCount}`],
+            ] as Array<[AdminTicketFilter, string]>).map(([filter, label]) => (
+              <button
+                key={filter}
+                className={adminTicketFilter === filter ? "active" : ""}
+                type="button"
+                onClick={() => setAdminTicketFilter(filter)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         )}
 
         {(isOperator || isClient) && dashboard && (
@@ -1112,9 +1402,10 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
           </section>
         )}
 
-        <div className="grid" style={{ marginTop: 14 }}>
+        {(!isAdmin || adminPage === "pagos" || adminPage === "usuarios" || adminPage === "tickets") && (
+        <div className={`grid ${isAdmin ? `admin-${adminPage}-grid` : ""}`} style={{ marginTop: 14 }}>
           <div className="stack">
-            {isAdmin && (
+            {isAdmin && adminPage === "usuarios" && adminUserTab === "operadores" && (
               <section className="panel" id="operator-accounts">
                 <div className="panel-header">
                   <div>
@@ -1165,7 +1456,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               </section>
             )}
 
-            {isAdmin && (
+            {isAdmin && adminPage === "usuarios" && adminUserTab === "clientes" && (
               <section className="panel" id="client-accounts">
                 <div className="panel-header">
                   <div>
@@ -1273,7 +1564,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               </section>
             )}
 
-            {isAdmin && (
+            {isAdmin && adminPage === "pagos" && (
               <section className="panel">
                 <div className="panel-header">
                   <div>
@@ -1477,7 +1768,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               </section>
             )}
 
-            {!isClient && (
+            {(isOperator || (isAdmin && adminPage === "tickets")) && (
             <section className="panel" id="upload-receipts">
               <div className="panel-header">
                 <h3>Subir recibo</h3>
@@ -1594,7 +1885,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
             </section>
             )}
 
-            {isAdmin && (
+            {isAdmin && adminPage === "tickets" && (
               <section className="panel">
                 <div className="panel-header">
                   <h3>Ticket manual</h3>
@@ -1688,14 +1979,87 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
           </div>
 
           <div className="stack">
+          {isAdmin && adminPage === "pagos" && (
+            <section className="panel admin-payments-table">
+              <div className="panel-header">
+                <div>
+                  <h3>Comisiones por operador</h3>
+                  <span className="panel-subtitle">Selecciona un operador para registrar su transferencia</span>
+                </div>
+                <WalletCards size={18} />
+              </div>
+              <div className="table-wrap">
+                {commissions.length === 0 ? (
+                  <div className="empty-state">No hay comisiones pendientes.</div>
+                ) : (
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Operador</th>
+                        <th>Ganado</th>
+                        <th>Pagado</th>
+                        <th>Pendiente</th>
+                        <th>Estado</th>
+                        <th>Accion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {commissions.map((commission) => (
+                        <tr key={commission.operatorId ?? commission.operatorName}>
+                          <td>
+                            <span className="table-person">
+                              <span className="admin-avatar">{commission.operatorName.slice(0, 2).toUpperCase()}</span>
+                              <strong>{commission.operatorName}</strong>
+                            </span>
+                          </td>
+                          <td className="num">{formatCurrency(commission.earnedAmount)}</td>
+                          <td className="num">{formatCurrency(commission.paidAmount)}</td>
+                          <td className="num"><strong>{formatCurrency(commission.pendingAmount)}</strong></td>
+                          <td>
+                            <span className={`status-pill commission-${commission.status}`}>
+                              {commission.status === "paid" ? "Pagado" : "Pendiente"}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              className="button secondary action-button"
+                              type="button"
+                              disabled={commission.pendingAmount <= 0}
+                              onClick={() => {
+                                const key = commission.operatorId ?? `name:${commission.operatorName}`;
+                                setSettlementEntity(key);
+                                setSelectedSettlementTickets(
+                                  settlementCandidates
+                                    .filter(
+                                      (candidate) =>
+                                        (candidate.entityId ?? `name:${candidate.entityName}`) === key,
+                                    )
+                                    .map((candidate) => candidate.ticketId),
+                                );
+                              }}
+                            >
+                              Seleccionar
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </section>
+          )}
+          {(!isAdmin || adminPage === "tickets") && (
           <section className="panel" id="ticket-pool">
             <div className="panel-header">
-              <h3>{isOperator ? "Mis tickets" : "Cola de factura"}</h3>
-              <span className="status-pill submit_pending">{pendingCount} pendientes</span>
+              <h3>{isOperator ? "Mis tickets" : isAdmin ? "Todos los tickets" : "Cola de factura"}</h3>
+              <span className="status-pill submit_pending">
+                {isAdmin ? filteredAdminTickets.length : pendingCount} resultados
+              </span>
             </div>
             <div className="table-wrap">
-              {tickets.length === 0 ? (
-                <div className="empty-state">No hay tickets pendientes.</div>
+              {(isAdmin ? filteredAdminTickets : tickets).length === 0 ? (
+                <div className="empty-state">No hay tickets para este filtro.</div>
               ) : isAdmin ? (
                 <table>
                   <thead>
@@ -1713,7 +2077,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                     </tr>
                   </thead>
                   <tbody>
-                    {tickets.map((ticket) => (
+                    {filteredAdminTickets.map((ticket) => (
                       <tr key={ticket.id}>
                         <td className="num">{formatTicketDate(ticket.ticketDate)}</td>
                         <td className="num">{ticket.folio}</td>
@@ -1821,6 +2185,8 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               )}
             </div>
           </section>
+          )}
+          {(!isAdmin || adminPage === "tickets") && (
           <section className="panel" id="monthly-report">
             <div className="panel-header">
               <div>
@@ -1860,8 +2226,10 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               )}
             </div>
           </section>
+          )}
           </div>
         </div>
+        )}
       </section>
       {(isOperator || isClient) && (
         <nav className="mobile-nav" aria-label="Navegacion principal">
