@@ -107,6 +107,12 @@ const adminPageMeta: Record<AdminPage, { eyebrow: string; title: string }> = {
   tickets: { eyebrow: "Operacion", title: "Todos los tickets" },
 };
 
+function themePreferenceKey(session: AppSession | null): string {
+  const identity =
+    session?.operatorId ?? session?.clientId ?? session?.clientEmail ?? session?.name ?? "guest";
+  return `gasolina-theme:${session?.role ?? "guest"}:${encodeURIComponent(identity.toLocaleLowerCase())}`;
+}
+
 function statusIcon(status: GasTicketStatus) {
   if (status === "submitted" || status === "already_invoiced") return <CheckCircle2 size={14} />;
   if (status === "failed" || status === "needs_review") return <AlertTriangle size={14} />;
@@ -195,7 +201,7 @@ function summarizeSubmitResults(results: SubmitResult[]): Message {
 }
 
 export function OperatorPortal({ initialSession, initialTickets }: OperatorPortalProps) {
-  const [theme, setTheme] = useState<Theme>("dark");
+  const [theme, setTheme] = useState<Theme>("light");
   const [adminPage, setAdminPage] = useState<AdminPage>("resumen");
   const [adminUserTab, setAdminUserTab] = useState<AdminUserTab>("operadores");
   const [adminTicketFilter, setAdminTicketFilter] = useState<AdminTicketFilter>("all");
@@ -331,22 +337,17 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
   }, [adminSearch, adminTicketFilter, tickets]);
 
   useEffect(() => {
-    const savedTheme = window.localStorage.getItem("gasolina-theme");
-    const nextTheme: Theme =
-      savedTheme === "dark" || savedTheme === "light"
-        ? savedTheme
-        : window.matchMedia("(prefers-color-scheme: light)").matches
-          ? "light"
-          : "dark";
+    const savedTheme = window.localStorage.getItem(themePreferenceKey(session));
+    const nextTheme: Theme = savedTheme === "dark" || savedTheme === "light" ? savedTheme : "light";
     document.documentElement.dataset.theme = nextTheme;
     setTheme(nextTheme);
-  }, []);
+  }, [session]);
 
   function toggleTheme() {
     setTheme((currentTheme) => {
       const nextTheme = currentTheme === "dark" ? "light" : "dark";
       document.documentElement.dataset.theme = nextTheme;
-      window.localStorage.setItem("gasolina-theme", nextTheme);
+      window.localStorage.setItem(themePreferenceKey(session), nextTheme);
       return nextTheme;
     });
   }

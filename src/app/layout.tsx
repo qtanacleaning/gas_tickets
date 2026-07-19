@@ -18,7 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="es-MX"
       className={sora.variable}
-      data-theme="dark"
+      data-theme="light"
       suppressHydrationWarning
     >
       <body>{children}</body>
