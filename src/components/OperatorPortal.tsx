@@ -38,6 +38,7 @@ import type {
   GasClientRecord,
   GasNotificationRecord,
   GasOperatorRecord,
+  GasReceiptRecord,
   GasTicketRecord,
   GasTicketStatus,
   MonthlyTicketReport,
@@ -242,6 +243,13 @@ const englishUiPhrases: Array<[string, string]> = [
   ["Asignar", "Assign"],
   ["Enviar", "Send"],
   ["Reintentar", "Retry"],
+  ["Reintentar factura", "Retry invoice"],
+  ["Recibos que necesitan atencion", "Receipts needing attention"],
+  ["Errores de OCR: reintenta el escaneo o elimina el recibo.", "OCR errors: retry scanning or delete the receipt."],
+  ["No hay recibos con errores de OCR.", "There are no receipts with OCR errors."],
+  ["Reprocesar OCR", "Rerun OCR"],
+  ["Eliminar", "Delete"],
+  ["con error", "with errors"],
   ["Enviado", "Sent"],
   ["Facturado", "Invoiced"],
   ["Revisar", "Review"],
@@ -324,7 +332,7 @@ function clientProfileReady(client: GasClientRecord): boolean {
 
 function getRowActionState(ticket: GasTicketRecord): RowActionState {
   if (ticket.status === "submit_pending") return { kind: "submit", label: "Enviar" };
-  if (ticket.status === "failed") return { kind: "submit", label: "Reintentar" };
+  if (ticket.status === "failed") return { kind: "submit", label: "Reintentar factura" };
   if (ticket.status === "submitted") return { kind: "label", label: "Enviado", tone: "success" };
   if (ticket.status === "already_invoiced") return { kind: "label", label: "Facturado", tone: "success" };
   return { kind: "label", label: "Revisar", tone: "error" };
@@ -380,6 +388,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
   const [uploadedBy, setUploadedBy] = useState("");
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
   const [tickets, setTickets] = useState<GasTicketRecord[]>(initialTickets.map(normalizeTicket));
+  const [ocrReceipts, setOcrReceipts] = useState<GasReceiptRecord[]>([]);
   const [paymentType, setPaymentType] = useState<PaymentType>("debit");
   const [manualForm, setManualForm] = useState({
     folio: "",
@@ -484,6 +493,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     () => tickets.filter((ticket) => ticket.status === "failed").length,
     [tickets],
   );
+  const ocrErrorCount = ocrReceipts.length;
   const filteredAdminTickets = useMemo(() => {
     const query = adminSearch.trim().toLocaleLowerCase("es-MX");
     return tickets.filter((ticket) => {
@@ -574,6 +584,17 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
       setTickets((data.tickets ?? []).map(normalizeTicket));
     }
     setBusy(null);
+  }
+
+  async function loadOcrReceipts() {
+    const response = await fetch("/api/receipts", { cache: "no-store" });
+    if (response.status === 401) {
+      setSession(null);
+      return;
+    }
+    if (!response.ok) return;
+    const data = (await response.json()) as { receipts?: GasReceiptRecord[] };
+    setOcrReceipts(data.receipts ?? []);
   }
 
   async function loadClients() {
@@ -680,6 +701,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     if (isAdmin) void loadOperators();
     if (isAdmin) void loadClients();
     if (isAdmin || isOperator) void loadCommissions();
+    if (isAdmin || isOperator) void loadOcrReceipts();
     if (isAdmin) void loadSettlementCandidates(settlementKind);
   }, [isAdmin, isClient, isOperator, session, settlementKind]);
 
@@ -760,6 +782,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     await fetch("/api/session", { method: "DELETE" });
     setSession(null);
     setTickets([]);
+    setOcrReceipts([]);
     setClients([]);
     setMonthlyReport([]);
     setCommissions([]);
@@ -993,7 +1016,39 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
             ? `${resubmitCount} recibo${resubmitCount === 1 ? " necesita" : "s necesitan"} una foto nueva.`
             : `${successCount} recibo${successCount === 1 ? "" : "s"} guardado${successCount === 1 ? "" : "s"}. Tickets detectados: ${ticketsCreated}.`,
     });
-    if (successCount > 0) await Promise.all([loadTickets(), loadNotifications()]);
+    if (successCount > 0) await Promise.all([loadTickets(), loadNotifications(), loadOcrReceipts()]);
+  }
+
+  async function retryOcr(receipt: GasReceiptRecord) {
+    setBusy(`ocr-${receipt.id}`);
+    const response = await fetch(`/api/receipts/${receipt.id}`, { method: "POST" });
+    const data = (await response.json()) as { ticketsCreated?: number; skippedReason?: string; error?: string };
+    setBusy(null);
+
+    if (!response.ok) {
+      setMessage({ type: "error", text: data.error ?? "No se pudo reprocesar el recibo." });
+    } else if (data.skippedReason || (data.ticketsCreated ?? 0) === 0) {
+      setMessage({ type: "error", text: "El OCR aun no pudo reconocer el recibo. Revisa la foto o elimina el intento." });
+    } else {
+      setMessage({ type: "success", text: `${data.ticketsCreated} ticket${data.ticketsCreated === 1 ? "" : "s"} detectado${data.ticketsCreated === 1 ? "" : "s"}.` });
+    }
+
+    await Promise.all([loadOcrReceipts(), loadTickets(), loadNotifications()]);
+  }
+
+  async function deleteOcrReceipt(receipt: GasReceiptRecord) {
+    if (!window.confirm(`Eliminar el recibo ${receipt.fileName}? Esta accion no se puede deshacer.`)) return;
+    setBusy(`delete-ocr-${receipt.id}`);
+    const response = await fetch(`/api/receipts/${receipt.id}`, { method: "DELETE" });
+    const data = (await response.json()) as { error?: string };
+    setBusy(null);
+
+    if (!response.ok) {
+      setMessage({ type: "error", text: data.error ?? "No se pudo eliminar el recibo." });
+      return;
+    }
+    setMessage({ type: "success", text: "Recibo con error eliminado." });
+    await Promise.all([loadOcrReceipts(), loadNotifications()]);
   }
 
   async function createManual(event: React.FormEvent<HTMLFormElement>) {
@@ -2261,6 +2316,68 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                 )}
               </div>
             </section>
+          )}
+          {(!isAdmin || adminPage === "tickets") && (
+          (isAdmin || isOperator) && (
+          <section className="panel" id="ocr-errors">
+            <div className="panel-header">
+              <div>
+                <h3>Recibos que necesitan atencion</h3>
+                <span className="panel-subtitle">Errores de OCR: reintenta el escaneo o elimina el recibo.</span>
+              </div>
+              <span className={`status-pill ${ocrErrorCount > 0 ? "failed" : "submit_pending"}`}>
+                {ocrErrorCount} con error
+              </span>
+            </div>
+            <div className="table-wrap">
+              {ocrReceipts.length === 0 ? (
+                <div className="empty-state">No hay recibos con errores de OCR.</div>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Recibo</th>
+                      {isAdmin && <th>Operador</th>}
+                      <th>Error</th>
+                      <th>Accion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ocrReceipts.map((receipt) => (
+                      <tr key={receipt.id}>
+                        <td className="receipt-cell">
+                          <span className="receipt-name" title={receipt.fileName}>{receipt.fileName}</span>
+                        </td>
+                        {isAdmin && <td>{receipt.operatorName ?? "Sin operador"}</td>}
+                        <td className="receipt-error">{receipt.errorMessage ?? "El OCR no encontro un ticket legible."}</td>
+                        <td>
+                          <div className="receipt-actions">
+                            <button
+                              className="button secondary action-button"
+                              type="button"
+                              onClick={() => retryOcr(receipt)}
+                              disabled={busy === `ocr-${receipt.id}` || busy === `delete-ocr-${receipt.id}`}
+                            >
+                              <RefreshCw size={14} />Reprocesar OCR
+                            </button>
+                            <button
+                              className="button secondary action-button delete-receipt"
+                              type="button"
+                              onClick={() => deleteOcrReceipt(receipt)}
+                              disabled={busy === `ocr-${receipt.id}` || busy === `delete-ocr-${receipt.id}`}
+                            >
+                              <Trash2 size={14} />Eliminar
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </section>
+          )
           )}
           {(!isAdmin || adminPage === "tickets") && (
           <section className="panel" id="ticket-pool">

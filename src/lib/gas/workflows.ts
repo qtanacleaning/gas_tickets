@@ -5,12 +5,17 @@ import {
   createReceipt,
   createTicket,
   createNotification,
+  canManageReceipt,
+  deleteReceiptFile,
+  deleteReceiptRecord,
   downloadReceiptFile,
   getClientById,
   getPendingTickets,
   getReceiptById,
   getTicketById,
   listReceiptsForOcr,
+  markReceiptForOcrRetry,
+  receiptHasTickets,
   updateReceipt,
   updateTicket,
   uploadReceiptFile,
@@ -18,6 +23,7 @@ import {
 import { extractTicketsFromImage } from "@/lib/gas/ocr";
 import { submitTicketToPetromayab } from "@/lib/gas/petromayab";
 import { validateTicketInput } from "@/lib/gas/validation";
+import type { AppSession } from "@/lib/auth";
 import type { GasClientRecord, GasTicketRecord } from "@/lib/gas/types";
 
 function sanitizeFileName(name: string): string {
@@ -213,6 +219,38 @@ export async function processPendingReceiptOcr(limit = 10) {
   }
 
   return results;
+}
+
+export async function retryReceiptOcr(receiptId: string, session: AppSession) {
+  const receipt = await getReceiptById(receiptId);
+  if (!receipt) throw new Error("Receipt not found.");
+  if (!canManageReceipt(receipt, session)) throw new Error("Unauthorized");
+  if (receipt.status !== "failed" && receipt.status !== "needs_review") {
+    throw new Error("Only receipts with an OCR error can be retried.");
+  }
+  if (await receiptHasTickets(receipt.id)) {
+    throw new Error("This receipt already created tickets and cannot be rerun automatically.");
+  }
+  if (!(await markReceiptForOcrRetry(receipt.id))) {
+    throw new Error("This receipt is already being processed or no longer needs a retry.");
+  }
+
+  return processReceiptOcr(receipt.id);
+}
+
+export async function deleteFailedReceipt(receiptId: string, session: AppSession): Promise<void> {
+  const receipt = await getReceiptById(receiptId);
+  if (!receipt) throw new Error("Receipt not found.");
+  if (!canManageReceipt(receipt, session)) throw new Error("Unauthorized");
+  if (receipt.status !== "failed" && receipt.status !== "needs_review") {
+    throw new Error("Only receipts with an OCR error can be deleted.");
+  }
+  if (await receiptHasTickets(receipt.id)) {
+    throw new Error("This receipt already created tickets and cannot be deleted from the OCR queue.");
+  }
+
+  if (receipt.storagePath) await deleteReceiptFile(receipt.storagePath);
+  await deleteReceiptRecord(receipt.id);
 }
 
 export async function submitTicket(ticketId: string): Promise<{ status: string }> {

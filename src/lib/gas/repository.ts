@@ -237,6 +237,13 @@ export async function downloadReceiptFile(storagePath: string): Promise<Blob> {
   return data;
 }
 
+export async function deleteReceiptFile(storagePath: string): Promise<void> {
+  const env = getAppEnv();
+  const supabase = createAdminClient();
+  const { error } = await supabase.storage.from(env.receiptBucket).remove([storagePath]);
+  if (error) throw new Error(`Receipt file deletion failed: ${error.message}`);
+}
+
 export async function createReceipt(input: {
   fileName: string;
   storagePath: string;
@@ -315,6 +322,69 @@ export async function listReceiptsForOcr(limit = 10): Promise<GasReceiptRecord[]
 
   if (error) throw new Error(`Receipt queue lookup failed: ${error.message}`);
   return ((data ?? []) as ReceiptRow[]).map(mapReceipt);
+}
+
+export async function listReceiptsNeedingAttention(session: AppSession, limit = 50): Promise<GasReceiptRecord[]> {
+  const supabase = createAdminClient();
+  let query = supabase
+    .from("gas_receipts")
+    .select("*")
+    .in("status", ["failed", "needs_review"])
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (session.role === "operator") {
+    query = session.operatorId
+      ? query.eq("operator_id", session.operatorId)
+      : query.eq("operator_name", session.name ?? "");
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(`Receipt attention queue lookup failed: ${error.message}`);
+  return ((data ?? []) as ReceiptRow[]).map(mapReceipt);
+}
+
+export function canManageReceipt(receipt: GasReceiptRecord, session: AppSession): boolean {
+  if (session.role === "admin") return true;
+  if (session.role !== "operator") return false;
+  return session.operatorId
+    ? receipt.operatorId === session.operatorId
+    : receipt.operatorName === (session.name ?? "");
+}
+
+export async function markReceiptForOcrRetry(id: string): Promise<boolean> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("gas_receipts")
+    .update({
+      status: "ocr_pending",
+      extracted_count: 0,
+      error_message: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .in("status", ["failed", "needs_review"])
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw new Error(`Receipt retry update failed: ${error.message}`);
+  return Boolean(data);
+}
+
+export async function receiptHasTickets(receiptId: string): Promise<boolean> {
+  const supabase = createAdminClient();
+  const { count, error } = await supabase
+    .from("gas_tickets")
+    .select("id", { count: "exact", head: true })
+    .eq("receipt_id", receiptId);
+  if (error) throw new Error(`Receipt ticket lookup failed: ${error.message}`);
+  return (count ?? 0) > 0;
+}
+
+export async function deleteReceiptRecord(id: string): Promise<void> {
+  const supabase = createAdminClient();
+  const { error } = await supabase.from("gas_receipts").delete().eq("id", id);
+  if (error) throw new Error(`Receipt deletion failed: ${error.message}`);
 }
 
 export async function createTicket(input: {

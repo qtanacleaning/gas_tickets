@@ -1134,6 +1134,26 @@ tbody tr:hover {
   min-width: 100px;
 }
 
+.receipt-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.receipt-error {
+  max-width: 340px;
+  color: var(--color-text-muted);
+}
+
+.delete-receipt {
+  color: #ba3e2e;
+  border-color: #e9b6ad;
+}
+
+.delete-receipt:hover:not(:disabled) {
+  background: #fff0ed;
+}
+
 .action-badge {
   display: inline-flex;
   min-height: 32px;
@@ -1946,6 +1966,10 @@ tbody tr:hover {
 
   .panel-header {
     padding-inline: 16px;
+  }
+
+  .receipt-actions {
+    min-width: 245px;
   }
 
   .panel-body {
