@@ -61,6 +61,7 @@ type Message = {
 
 type UploadQueueStatus = "queued" | "uploading" | "done" | "error";
 type Theme = "dark" | "light";
+type Language = "es" | "en";
 type AdminPage = "resumen" | "pagos" | "aprobaciones" | "usuarios" | "tickets";
 type AdminUserTab = "operadores" | "clientes";
 type AdminTicketFilter = "all" | "recognized" | "review" | "rejected";
@@ -93,10 +94,24 @@ const statusLabels: Record<GasTicketStatus, string> = {
   failed: "Error",
 };
 
+const statusLabelsEn: Record<GasTicketStatus, string> = {
+  submit_pending: "Pending",
+  submitted: "Invoiced",
+  already_invoiced: "Already invoiced",
+  needs_review: "Review",
+  failed: "Error",
+};
+
 const roleLabels: Record<UserRole, string> = {
   admin: "Admin",
   operator: "Operador",
   client: "Cliente",
+};
+
+const roleLabelsEn: Record<UserRole, string> = {
+  admin: "Admin",
+  operator: "Operator",
+  client: "Client",
 };
 
 const adminPageMeta: Record<AdminPage, { eyebrow: string; title: string }> = {
@@ -107,11 +122,161 @@ const adminPageMeta: Record<AdminPage, { eyebrow: string; title: string }> = {
   tickets: { eyebrow: "Operacion", title: "Todos los tickets" },
 };
 
-function themePreferenceKey(session: AppSession | null): string {
+function userPreferenceKey(preference: "theme" | "language", session: AppSession | null): string {
   const identity =
     session?.operatorId ?? session?.clientId ?? session?.clientEmail ?? session?.name ?? "guest";
-  return `gasolina-theme:${session?.role ?? "guest"}:${encodeURIComponent(identity.toLocaleLowerCase())}`;
+  return `gasolina-${preference}:${session?.role ?? "guest"}:${encodeURIComponent(identity.toLocaleLowerCase())}`;
 }
+
+function themePreferenceKey(session: AppSession | null): string {
+  return userPreferenceKey("theme", session);
+}
+
+function languagePreferenceKey(session: AppSession | null): string {
+  return userPreferenceKey("language", session);
+}
+
+function LanguageSelector({
+  language,
+  onChange,
+  className = "",
+}: {
+  language: Language;
+  onChange: (language: Language) => void;
+  className?: string;
+}) {
+  return (
+    <div className={`language-toggle ${className}`.trim()} role="group" aria-label="Language selector">
+      <button
+        className={language === "es" ? "active" : ""}
+        type="button"
+        onClick={() => onChange("es")}
+        aria-pressed={language === "es"}
+      >
+        ES
+      </button>
+      <button
+        className={language === "en" ? "active" : ""}
+        type="button"
+        onClick={() => onChange("en")}
+        aria-pressed={language === "en"}
+      >
+        EN
+      </button>
+    </div>
+  );
+}
+
+const englishUiPhrases: Array<[string, string]> = [
+  ["Comision pendiente", "Pending commission"],
+  ["Tickets procesados", "Processed tickets"],
+  ["Operadores activos", "Active operators"],
+  ["Por pagar", "To pay"],
+  ["operadores con actividad", "operators with activity"],
+  ["reconocidos", "recognized"],
+  ["por revisar", "to review"],
+  ["solicitudes pendientes", "pending requests"],
+  ["tickets disponibles", "tickets available"],
+  ["Actividad reciente", "Recent activity"],
+  ["Ver tickets", "View tickets"],
+  ["Aprobaciones pendientes", "Pending approvals"],
+  ["No hay solicitudes pendientes.", "There are no pending requests."],
+  ["Ir a aprobaciones", "Go to approvals"],
+  ["Semana actual", "Current week"],
+  ["Total a pagar", "Total to pay"],
+  ["Pendientes", "Pending"],
+  ["Aprobaciones de operadores", "Operator approvals"],
+  ["Solicitud de acceso como operador", "Operator access request"],
+  ["Registro", "Registered"],
+  ["Estado", "Status"],
+  ["Requiere revision", "Needs review"],
+  ["No hay aprobaciones pendientes", "There are no pending approvals"],
+  ["Las nuevas solicitudes de operadores apareceran aqui.", "New operator requests will appear here."],
+  ["Operadores", "Operators"],
+  ["Clientes", "Clients"],
+  ["Operador", "Operator"],
+  ["Cliente", "Client"],
+  ["Acceso", "Access"],
+  ["Tickets", "Tickets"],
+  ["PIN de operador", "Operator PIN"],
+  ["Activo", "Active"],
+  ["Perfil pendiente", "Profile pending"],
+  ["Incompleto", "Incomplete"],
+  ["Todos", "All"],
+  ["Reconocidos", "Recognized"],
+  ["Por revisar", "To review"],
+  ["Rechazados", "Rejected"],
+  ["Resumen", "Overview"],
+  ["Pagos semanales", "Weekly payments"],
+  ["Aprobaciones", "Approvals"],
+  ["Usuarios", "Users"],
+  ["Panel", "Dashboard"],
+  ["Finanzas", "Finance"],
+  ["Onboarding", "Onboarding"],
+  ["Directorio", "Directory"],
+  ["Operacion", "Operations"],
+  ["Resumen de la semana", "Weekly overview"],
+  ["Todos los tickets", "All tickets"],
+  ["Cuentas de operadores", "Operator accounts"],
+  ["Cuentas de clientes", "Client accounts"],
+  ["Comisiones", "Commissions"],
+  ["Retiros y pagos manuales", "Withdrawals and manual payments"],
+  ["Perfil fiscal", "Tax profile"],
+  ["Subir recibo", "Upload receipt"],
+  ["Fotos de recibos", "Receipt photos"],
+  ["Ticket manual", "Manual ticket"],
+  ["Comisiones por operador", "Commissions by operator"],
+  ["Mis tickets", "My tickets"],
+  ["Cola de factura", "Invoice queue"],
+  ["Tickets enviados por mes", "Tickets sent by month"],
+  ["Historial de facturacion exitosa", "Successful invoicing history"],
+  ["Actualizar", "Refresh"],
+  ["Enviar cola", "Send queue"],
+  ["Salir", "Sign out"],
+  ["Guardar operador", "Save operator"],
+  ["Guardar cuenta", "Save account"],
+  ["Guardar perfil", "Save profile"],
+  ["Registrar retiro", "Record withdrawal"],
+  ["Registrar pago", "Record payment"],
+  ["Seleccionar", "Select"],
+  ["Asignar", "Assign"],
+  ["Enviar", "Send"],
+  ["Reintentar", "Retry"],
+  ["Enviado", "Sent"],
+  ["Facturado", "Invoiced"],
+  ["Revisar", "Review"],
+  ["Escanear", "Scan"],
+  ["Avisos", "Alerts"],
+  ["Inicio", "Home"],
+  ["Contactar Admin", "Contact admin"],
+  ["Solicitar pago semanal", "Request weekly payment"],
+  ["Comision acumulada", "Accumulated commission"],
+  ["Semana", "Week"],
+  ["Mes", "Month"],
+  ["Idioma", "Language"],
+  ["Administrador", "Administrator"],
+  ["Nombre", "Name"],
+  ["Nombre o razon social", "Name or legal business name"],
+  ["Regimen fiscal", "Tax regime"],
+  ["Email de acceso", "Access email"],
+  ["Password temporal", "Temporary password"],
+  ["Cuenta del cliente", "Client account"],
+  ["Fecha del ticket", "Ticket date"],
+  ["Metodo de pago", "Payment method"],
+  ["Debito", "Debit"],
+  ["Credito", "Credit"],
+  ["Agregar ticket", "Add ticket"],
+  ["No hay tickets para este filtro.", "No tickets match this filter."],
+  ["No hay tickets pendientes.", "There are no pending tickets."],
+  ["No hay comisiones pendientes.", "There are no pending commissions."],
+  ["No hay tickets pendientes de liquidar.", "There are no tickets waiting for settlement."],
+  ["Selecciona tickets para bloquearlos al registrar el movimiento", "Select tickets to lock when recording the transaction"],
+  ["Selecciona un operador para registrar su transferencia", "Select an operator to record their transfer"],
+  ["No tienes notificaciones nuevas.", "You have no new notifications."],
+  ["Portal privado para recibos, operadores y clientes.", "Private portal for receipts, operators, and clients."],
+  ["Entrar", "Sign in"],
+  ["Rol de acceso", "Access role"],
+];
 
 function statusIcon(status: GasTicketStatus) {
   if (status === "submitted" || status === "already_invoiced") return <CheckCircle2 size={14} />;
@@ -202,6 +367,7 @@ function summarizeSubmitResults(results: SubmitResult[]): Message {
 
 export function OperatorPortal({ initialSession, initialTickets }: OperatorPortalProps) {
   const [theme, setTheme] = useState<Theme>("light");
+  const [language, setLanguage] = useState<Language>("es");
   const [adminPage, setAdminPage] = useState<AdminPage>("resumen");
   const [adminUserTab, setAdminUserTab] = useState<AdminUserTab>("operadores");
   const [adminTicketFilter, setAdminTicketFilter] = useState<AdminTicketFilter>("all");
@@ -342,6 +508,47 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     document.documentElement.dataset.theme = nextTheme;
     setTheme(nextTheme);
   }, [session]);
+
+  useEffect(() => {
+    const savedLanguage = window.localStorage.getItem(languagePreferenceKey(session));
+    const nextLanguage: Language = savedLanguage === "en" ? "en" : "es";
+    document.documentElement.lang = nextLanguage === "en" ? "en" : "es-MX";
+    setLanguage(nextLanguage);
+  }, [session]);
+
+  useEffect(() => {
+    document.documentElement.lang = language === "en" ? "en" : "es-MX";
+    const app = document.querySelector("main");
+    if (!app || language === "es") return;
+
+    const textNodes: Text[] = [];
+    const walker = document.createTreeWalker(app, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      if (node.parentElement && !node.parentElement.closest("script, style")) {
+        textNodes.push(node as Text);
+      }
+      node = walker.nextNode();
+    }
+
+    for (const textNode of textNodes) {
+      textNode.nodeValue = englishUiPhrases.reduce(
+        (value, [spanish, english]) => value.replaceAll(spanish, english),
+        textNode.nodeValue ?? "",
+      );
+    }
+
+    for (const input of app.querySelectorAll<HTMLInputElement>("input[placeholder]")) {
+      const placeholder = input.placeholder;
+      if (placeholder === "Buscar operador, folio...") input.placeholder = "Search operator, ticket...";
+      if (placeholder === "Nombre") input.placeholder = "Name";
+    }
+  });
+
+  function changeLanguage(nextLanguage: Language) {
+    window.localStorage.setItem(languagePreferenceKey(session), nextLanguage);
+    setLanguage(nextLanguage);
+  }
 
   function toggleTheme() {
     setTheme((currentTheme) => {
@@ -839,6 +1046,11 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
     return (
       <main className="login-screen">
         <form className="login-panel stack" onSubmit={login}>
+          <LanguageSelector
+            language={language}
+            onChange={changeLanguage}
+            className="login-language-toggle"
+          />
           <button
             className="theme-toggle login-theme-toggle"
             type="button"
@@ -864,7 +1076,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                 className={loginRole === role ? "active" : ""}
                 onClick={() => setLoginRole(role)}
               >
-                {roleLabels[role]}
+                {language === "en" ? roleLabelsEn[role] : roleLabels[role]}
               </button>
             ))}
           </div>
@@ -923,7 +1135,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
           </span>
           <div>
             <h1>Gasolina</h1>
-            <p>{roleLabels[session.role]}</p>
+            <p>{language === "en" ? roleLabelsEn[session.role] : roleLabels[session.role]}</p>
           </div>
           {isAdmin && <span className="admin-badge">Admin</span>}
         </div>
@@ -977,10 +1189,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
               </button>
             </nav>
             <div className="sidebar-footer">
-              <div className="language-toggle" aria-label="Idioma">
-                <span className="active">ES</span>
-                <span>EN</span>
-              </div>
+              <LanguageSelector language={language} onChange={changeLanguage} />
               <div className="admin-user-card">
                 <span>{(session.name ?? "Admin").slice(0, 2).toUpperCase()}</span>
                 <div>
@@ -1039,6 +1248,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
             </h2>
           </div>
           <div className="toolbar">
+            {!isAdmin && <LanguageSelector language={language} onChange={changeLanguage} className="toolbar-language" />}
             {isAdmin && (
               <label className="admin-search">
                 <Search size={16} />
@@ -1128,7 +1338,9 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                         <strong>{ticket.operatorName ?? "Carga manual"}</strong>
                         <small>Ticket #{ticket.folio} · {formatTicketDate(ticket.ticketDate)}</small>
                       </div>
-                      <span className={`status-pill ${ticket.status}`}>{statusLabels[ticket.status]}</span>
+                      <span className={`status-pill ${ticket.status}`}>
+                        {language === "en" ? statusLabelsEn[ticket.status] : statusLabels[ticket.status]}
+                      </span>
                       <strong className="activity-amount">{formatCurrency(ticket.operatorCommission)}</strong>
                     </article>
                   ))}
@@ -2112,7 +2324,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                         <td>
                           <span className={`status-pill ${ticket.status}`}>
                             {statusIcon(ticket.status)}
-                            {statusLabels[ticket.status]}
+                            {language === "en" ? statusLabelsEn[ticket.status] : statusLabels[ticket.status]}
                           </span>
                         </td>
                         <td className="receipt-cell">
@@ -2169,7 +2381,7 @@ export function OperatorPortal({ initialSession, initialTickets }: OperatorPorta
                       <div className="role-ticket-title">
                         <div><span>Folio</span><strong>{ticket.folio}</strong></div>
                         <span className={`status-pill ${ticket.status}`}>
-                          {statusIcon(ticket.status)}{statusLabels[ticket.status]}
+                          {statusIcon(ticket.status)}{language === "en" ? statusLabelsEn[ticket.status] : statusLabels[ticket.status]}
                         </span>
                       </div>
                       <div className="role-ticket-values">

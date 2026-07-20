@@ -1317,14 +1317,39 @@ tbody tr:hover {
   text-align: center;
 }
 
-.language-toggle span {
+.language-toggle button {
+  border: 0;
   border-radius: 999px;
   padding: 5px;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
 }
 
 .language-toggle .active {
   background: var(--color-accent);
   color: var(--color-accent-ink);
+}
+
+.toolbar-language {
+  min-width: 90px;
+  min-height: 40px;
+  margin-right: 2px;
+  padding: 3px;
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-muted);
+}
+
+.login-language-toggle {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  width: 92px;
+  border-color: var(--color-border);
+  background: var(--color-surface-alt);
+  color: var(--color-muted);
 }
 
 .admin-user-card {
